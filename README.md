@@ -75,3 +75,17 @@ MIT License — see [LICENSE](./LICENSE)
 ---
 
 Made for the Wan2GP community by GKartist75
+
+---
+
+## 📸 Showcase: Create/Edit Tab Redesign
+
+![Create/Edit Tab Redesign](assets/showcase-redesign.svg)
+
+### Redesign Highlights
+- **Tabbed Layout** — 6 sub-tabs: URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings
+- **Auto-ID** — Sanitizes input, generates ID from source model + finetune name, deduplicates
+- **Markdown Toolbar** — Bold, Italic, Heading, List, Link, Code buttons in description fields
+- **Creator/Editor Mode** — Source Model presence toggles between creator and editor action rows
+- **URL Validation** — Per-URL green/red status; pre-download missing files
+- **Import/Export** — Import from JSON, Export via download button, two-step Delete confirmation
