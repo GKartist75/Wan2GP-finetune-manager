@@ -89,3 +89,10 @@ Made for the Wan2GP community by GKartist75
 - **Creator/Editor Mode** — Source Model presence toggles between creator and editor action rows
 - **URL Validation** — Per-URL green/red status; pre-download missing files
 - **Import/Export** — Import from JSON, Export via download button, two-step Delete confirmation
+
+---
+
+## 🔗 Links
+
+- **GitHub**: https://github.com/GKartist75/Wan2GP-finetune-manager
+- **HF Registry**: https://huggingface.co/spaces/GKartist75/wan2gp-finetunes — browse the finetune registry live
