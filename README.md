@@ -14,13 +14,20 @@ Community finetune registry plugin for Wan2GP. Browse, load, create, improve, an
 
 ## Install
 
-### Zip (quick)
-1. Download `wan2gp-finetune-manager.zip`
-2. Extract to `C:\Users\gjaku\Wan2GP\plugins\wan2gp-finetune-manager`
-3. Restart Wan2GP
+### Easiest — Install from URL (in Wan2GP)
+1. Open Wan2GP → **Plugins** tab
+2. Click **Install from URL** (expand the section)
+3. Paste the GitHub URL into the **GitHub URL** field:
 
-### Git (for updates)
-1. Clone `https://github.com/GKartist75/Wan2GP-finetune-manager` into `plugins/`
+   ```
+   https://github.com/GKartist75/Wan2GP-finetune-manager
+   ```
+
+4. Click **Download and Install from URL**
+5. Restart Wan2GP when prompted
+
+### Alternative — Manual
+1. Download or clone the repo into `C:\Users\gjaku\Wan2GP\plugins\wan2gp-finetune-manager`
 2. Restart Wan2GP
 
 ## Upload to Registry
