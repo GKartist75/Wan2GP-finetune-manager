@@ -1,0 +1,12 @@
+{
+  "name": "Finetune Manager",
+  "author": "GKartist75",
+  "version": "3.2.0",
+  "description": "Community finetune registry: browse, load, create, edit, improve, and upload finetune JSONs for Wan2GP",
+  "type": ["app"],
+  "date": "2026-07-14",
+  "wan2gp_version": "12.3",
+  "tags": ["finetune", "registry", "civitai", "community", "editor"],
+  "homepage": "https://github.com/GKartist75/Wan2GP-finetune-manager",
+  "registry_url": "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes"
+}
