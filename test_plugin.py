@@ -840,68 +840,39 @@ class TestFetchRegistryJson:
 # ==============================================================================
 
 class TestHFUpload:
-    """_hf_upload() pushes to HF Space and updates index.json."""
+    """_hf_upload() pushes finetune JSON to HF Space.
+    No index.json management -- discovery is dynamic."""
 
-    def _make_mock(self, existing_index):
+    def test_uploads_finetune_file(self):
         api = MagicMock()
-        api.hf_hub_download.return_value = None
-        calls = {"uploads": [], "index_uploads": []}
+        calls = []
 
         def fake_upload(path_or_fileobj, **kw):
-            path_in_repo = kw.get("path_in_repo", "")
-            calls["uploads"].append(path_in_repo)
-            if path_in_repo == "index.json":
-                data = json.loads(path_or_fileobj) if isinstance(path_or_fileobj, bytes) else json.loads(path_or_fileobj)
-                calls["index_uploads"].append(data)
+            calls.append(kw.get("path_in_repo", ""))
         api.upload_file.side_effect = fake_upload
-        return api, calls
 
-    def test_upload_adds_new_entry(self):
-        existing = {"registry": "wan2gp-finetune-registry", "version": 1,
-                    "finetunes": [{"id": "old"}]}
-        api, calls = self._make_mock(existing)
-        with patch("builtins.open", MagicMock()):
-            with patch("json.load", return_value=existing):
-                with patch("plugin.HfApi", return_value=api):
-                    FM._hf_upload("new-fin",
-                                  {"model": {"name": "New", "architecture": "t2v",
-                                             "description": ""}})
-        assert "finetunes/new-fin.json" in calls["uploads"]
-        assert "index.json" in calls["uploads"]
-        idx = calls["index_uploads"][0]
-        ids = [f["id"] for f in idx["finetunes"]]
-        assert "old" in ids
-        assert "new-fin" in ids
-
-    def test_upload_replaces_existing_entry(self):
-        existing = {"registry": "wan2gp-finetune-registry", "version": 1,
-                    "finetunes": [{"id": "dup", "name": "Old Name"}]}
-        api, calls = self._make_mock(existing)
-        with patch("builtins.open", MagicMock()):
-            with patch("json.load", return_value=existing):
-                with patch("plugin.HfApi", return_value=api):
-                    FM._hf_upload("dup",
-                                  {"model": {"name": "New Name", "architecture": "t2v",
-                                             "description": "updated"}})
-        idx = calls["index_uploads"][0]
-        assert len(idx["finetunes"]) == 1
-        assert idx["finetunes"][0]["name"] == "New Name"
-
-    def test_download_failure_raises(self):
-        """B1: index.json download failure must raise, not silently overwrite the registry."""
-        api, calls = self._make_mock({})
-        api.hf_hub_download.side_effect = Exception("Network error")
         with patch("plugin.HfApi", return_value=api):
-            with pytest.raises(Exception, match="Network error"):
-                FM._hf_upload("only-one",
-                              {"model": {"name": "Only", "architecture": "t2v",
-                                         "description": ""}})
-        assert len(calls["uploads"]) == 1, (
-            "First upload (finetune file) should succeed, only index should fail"
-        )
-        assert len(calls["index_uploads"]) == 0, (
-            "B1 FIXED: index must not be uploaded on download failure"
-        )
+            FM._hf_upload("my-fin",
+                          {"model": {"name": "My", "architecture": "t2v",
+                                     "description": ""}})
+        assert "finetunes/my-fin.json" in calls, \
+            "Should upload the finetune JSON file"
+        assert not any("index.json" in c for c in calls), \
+            "Should NOT update index.json --- dynamic discovery replaces it"
+
+    def test_deserializes_model_correctly(self):
+        api = MagicMock()
+        uploaded = []
+
+        def fake_upload(path_or_fileobj, **kw):
+            uploaded.append(json.loads(path_or_fileobj))
+        api.upload_file.side_effect = fake_upload
+
+        payload = {"model": {"name": "Test", "architecture": "t2v",
+                             "description": "Hello"}}
+        with patch("plugin.HfApi", return_value=api):
+            FM._hf_upload("test-fin", payload)
+        assert uploaded[0]["model"]["name"] == "Test"
 
 
 # ==============================================================================
@@ -1401,46 +1372,136 @@ class TestAllTags:
 # ==============================================================================
 
 class TestHFUploadTags:
-    """_hf_upload() stores tags in the index entry."""
+    """_hf_upload() stores tags in the uploaded JSON (not in an index).
+    Tags are read dynamically by _fetch_dynamic_registry()."""
 
-    def _make_mock(self):
+    def test_tags_preserved_in_uploaded_json(self):
         api = MagicMock()
-        api.hf_hub_download.return_value = None
-        calls = {"index_uploads": []}
+        uploaded = []
 
         def fake_upload(path_or_fileobj, **kw):
-            if kw.get("path_in_repo") == "index.json":
-                data = json.loads(path_or_fileobj) if isinstance(path_or_fileobj, bytes) else json.loads(path_or_fileobj)
-                calls["index_uploads"].append(data)
+            uploaded.append(json.loads(path_or_fileobj))
         api.upload_file.side_effect = fake_upload
-        return api, calls
 
-    def test_tags_included_in_index(self):
-        existing = {"registry": "test", "version": 1, "finetunes": []}
-        api, calls = self._make_mock()
-        with patch("builtins.open", MagicMock()):
-            with patch("json.load", return_value=existing):
-                with patch("plugin.HfApi", return_value=api):
-                    FM._hf_upload("tagged-fin", {
-                        "model": {"name": "Tagged", "architecture": "t2v",
-                                  "description": "", "tags": ["anime", "style"]}})
-        idx = calls["index_uploads"][0]
-        entry = idx["finetunes"][0]
-        assert "tags" in entry
+        payload = {"model": {"name": "Tagged", "architecture": "t2v",
+                             "description": "", "tags": ["anime", "style"]}}
+        with patch("plugin.HfApi", return_value=api):
+            FM._hf_upload("tagged-fin", payload)
+        assert uploaded[0]["model"]["tags"] == ["anime", "style"]
+
+    def test_tags_omitted_preserved_as_empty(self):
+        api = MagicMock()
+        uploaded = []
+
+        def fake_upload(path_or_fileobj, **kw):
+            uploaded.append(json.loads(path_or_fileobj))
+        api.upload_file.side_effect = fake_upload
+
+        payload = {"model": {"name": "Plain", "architecture": "t2v", "description": ""}}
+        with patch("plugin.HfApi", return_value=api):
+            FM._hf_upload("no-tags", payload)
+        assert "tags" not in uploaded[0]["model"] or uploaded[0]["model"].get("tags", []) == []
+
+
+# ==============================================================================
+# MODULE-LEVEL: _fetch_dynamic_registry()
+# ==============================================================================
+
+class TestFetchDynamicRegistry:
+    """_fetch_dynamic_registry() lists actual finetune files from the HF Space.
+    No index.json needed -- always in sync."""
+
+    def test_returns_empty_when_no_files(self):
+        api = MagicMock()
+        api.list_repo_files.return_value = []
+        with patch("plugin.HfApi", return_value=api):
+            result = FM._fetch_dynamic_registry()
+        assert result == []
+
+    def test_skips_non_finetune_files(self):
+        api = MagicMock()
+        api.list_repo_files.return_value = [
+            "README.md",
+            "index.json",
+            "finetunes/test.json",
+            ".gitattributes",
+        ]
+        with patch("plugin.HfApi", return_value=api):
+            with patch("requests.get") as g:
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {
+                    "model": {"name": "Test", "architecture": "t2v"}}
+                g.return_value = mock_resp
+                result = FM._fetch_dynamic_registry()
+        assert len(result) == 1
+        assert result[0]["id"] == "test"
+        assert result[0]["name"] == "Test"
+
+    def test_skips_404_files(self):
+        api = MagicMock()
+        api.list_repo_files.return_value = [
+            "finetunes/exists.json",
+            "finetunes/missing.json",
+        ]
+        with patch("plugin.HfApi", return_value=api):
+            with patch("requests.get") as g:
+                def resp(*a, **kw):
+                    url = a[0] if a else kw.get("url", "")
+                    m = MagicMock()
+                    if "exists" in url:
+                        m.status_code = 200
+                        m.json.return_value = {
+                            "model": {"name": "Exists", "architecture": "t2v"}}
+                    else:
+                        m.status_code = 404
+                    return m
+                g.side_effect = resp
+                result = FM._fetch_dynamic_registry()
+        assert len(result) == 1
+        assert result[0]["id"] == "exists"
+
+    def test_extracts_tags_and_urls(self):
+        api = MagicMock()
+        api.list_repo_files.return_value = ["finetunes/full.json"]
+        with patch("plugin.HfApi", return_value=api):
+            with patch("requests.get") as g:
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {
+                    "model": {
+                        "name": "Full",
+                        "architecture": "t2v",
+                        "tags": ["anime", "style"],
+                        "URLs": ["https://example.com/a.safetensors"],
+                        "loras": ["https://example.com/b.safetensors"],
+                        "finetune_source_model": "base-model",
+                    },
+                    "num_inference_steps": 25,
+                    "guidance_scale": 4.0,
+                }
+                g.return_value = mock_resp
+                result = FM._fetch_dynamic_registry()
+        assert len(result) == 1
+        entry = result[0]
         assert entry["tags"] == ["anime", "style"]
+        assert entry["URLs"] == ["https://example.com/a.safetensors"]
+        assert entry["loras"] == ["https://example.com/b.safetensors"]
+        assert entry["source"] == "base-model"
+        assert entry["default_settings"]["num_inference_steps"] == 25
+        assert entry["default_settings"]["guidance_scale"] == 4.0
 
-    def test_tags_omitted_from_index_when_missing(self):
-        existing = {"registry": "test", "version": 1, "finetunes": []}
-        api, calls = self._make_mock()
-        with patch("builtins.open", MagicMock()):
-            with patch("json.load", return_value=existing):
-                with patch("plugin.HfApi", return_value=api):
-                    FM._hf_upload("no-tags", {
-                        "model": {"name": "Plain", "architecture": "t2v",
-                                  "description": ""}})
-        idx = calls["index_uploads"][0]
-        entry = idx["finetunes"][0]
-        assert entry.get("tags") == []
+    def test_api_failure_returns_empty(self):
+        with patch("plugin.HfApi", side_effect=Exception("API down")):
+            result = FM._fetch_dynamic_registry()
+        assert result == []
+
+    def test_list_repo_files_exception_returns_empty(self):
+        api = MagicMock()
+        api.list_repo_files.side_effect = Exception("List failed")
+        with patch("plugin.HfApi", return_value=api):
+            result = FM._fetch_dynamic_registry()
+        assert result == []
 
 
 # ==============================================================================

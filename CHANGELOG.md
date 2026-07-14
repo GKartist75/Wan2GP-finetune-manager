@@ -1,46 +1,73 @@
 # Changelog
 
-## [3.2.0] — 2026-07-14
+## v3.2.0 (2026-07-14)
+
 ### Added
-- **Download button** — saves finetune JSON locally without switching model
-- **Improve / Create Variant fills editor** — creates variant and pre-fills Create/Edit tab
+- Browse tab: standalone "Download" button (download without switching model)
+- Browse tab: "Improve / Create Variant" now fills Create/Edit tab instead of switching model
+  - Creates variant JSON on disk, pre-fills all 32 form fields, switches to editor tab
+- P0: URL Validation — per-URL green/red status with HEAD+GET+RANGE fallback
+- P1: Pre-Download system — downloads finetune files via Wan2GP's `download_file()`
+- P1: CivitAI Browser Tab — search, filter, one-click version URL fill
+- Tags/Categories — comma-separated tags, badges, filter, search
+- HF Space dynamic file listing — no more stale `index.json`
+- HF Space search/filter — architecture dropdown, tag dropdown, live match count
+- Click-to-expand detail modal on HF Space cards — syntax-highlighted JSON + download button
+
+### Fixed
+- `fin_cancel` double definition — Creator row Cancel button now works correctly
+- Local tab download — replaced `gr.File(visible=False)` with `gr.DownloadButton`
+- Server crash on variant creation — `UnboundLocalError` when ALL_INPUTS referenced before definition
+- Gradio 5 nested list bug — all dropdowns handle `[[display, value]]` format
+- Grammar — "1 local finetunes" → "1 local finetune"
+- Upload tab missing refresh — added Refresh button to populate local finetune dropdown
+
 ### Changed
-- **CivitAI fill simplified** — only fills download URL, leaves other fields unchanged
-### Fixed
-- Server crash: UnboundLocalError when ALL_INPUTS referenced before definition
+- Local tab redesigned — visual cards instead of dropdown, matches Browse tab styling
+- Registry switched to dynamic file listing — no index.json sync issues
+- Upload simplified — no index.json management, atomic file upload
+- HF Space page — dynamic file listing with search/filter UI
 
-## [3.1.0] — 2026-07-14
-### Added
-- URL Validation (P0) — HEAD requests with GET+RANGE fallback, per-URL status
-- Pre-Download system (P1) — download_file() for HF Hub and generic URLs
-- CivitAI Browser tab (P1) — search, filter, browse, one-click fill
-- Tags/Categories system — comma-separated tags, badges, filter
-### Fixed
-- Python 3.11 f-string backslash issue in CivitAI render
-### Tests
-- 147 unit tests (up from 105)
+## v3.1.0 (2026-07-14)
 
-## [3.0.0] — 2026-07-13
 ### Added
-- Complete Create/Edit tab redesign matching built-in Finetune Editor (Alt+F)
-- Tabbed layout: URLs/LoRAs/Resolutions/Help/Prompt Enhancer/Settings
-- Markdown editor toolbar, auto-ID generation, Source Model field
-- Creator/Editor mode switching, Create & New, two-step delete
+- Create/Edit Tab Redesign — full tabbed layout matching built-in Finetune Editor
+- Auto-ID generation — sanitizes, deduplicates across existing files
+- Creator/Editor mode switching based on Source Model presence
+- Markdown toolbar in description fields
+- Import from JSON, Export via DownloadButton
+- Two-step delete confirmation
+
 ### Fixed
-- B1: Index wipe on upload failure
-- B2: XSS via fid
-- B3: Resolution parsing
-- B4: Guidance/steps zero lost
-- B5: onclick quoting broken
+- B1 — index wipe on upload failure (simplified upload, no index.json)
+- B2 — XSS via fid parameter
+- B3 — resolution parsing edge cases
+- B4 — guidance/steps zero values lost
+- B5 — onclick quoting broken (card selection impossible)
+- B5b — wrong element target for selection
 - URL string vs array format mismatch
-### Tests
-- 105 unit tests (up from 92)
+- XSS via name field
 
-## [2.0.0] — 2026-07-13
+### Changed
+- All 11 major fixes applied to both dev and live plugin.py
+- Server restart automated after each batch of changes
+
+## v3.0.0 (2026-07-13)
+
 ### Added
-- Initial 4-tab release: Browse, Create/Edit, Local, Upload
-- Registry browsing with card UI
-- Search, filter, Download & Switch
-- Basic finetune editor, Local management
-- HF Registry upload with token auth
-- 92 unit tests
+- 5-tab Gradio UI: Browse, Create/Edit, Local, Upload, CivitAI
+- Browse tab with registry cards, search, architecture/tag filters
+- Create/Edit tab with full finetune form
+- Local tab with file management (list, load, delete, import, export)
+- Upload tab for pushing finetunes to HF Space
+- CivitAI search integration
+- URL validation (per-URL status)
+- Pre-download system
+- Tags/categories system
+- Export JSON as download
+- 152 unit tests
+
+### Changed
+- Full architectural rewrite matching FINETUNES.md spec
+- Dynamic registry discovery (no index.json)
+- Gradio 5 compatibility

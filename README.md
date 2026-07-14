@@ -1,82 +1,44 @@
-# Wan2GP Finetune Manager
+# Wan2GP Finetune Manager Plugin v3.2.0
 
-[![Wan2GP](https://img.shields.io/badge/Wan2GP-v12.3-blue)]()
-[![Version](https://img.shields.io/badge/version-3.2.0-brightgreen)]()
-[![Status](https://img.shields.io/badge/status-active-success)]()
-[![License](https://img.shields.io/badge/license-MIT-blue)]()
-
-A **Wan2GP plugin** for browsing, creating, editing, and sharing community finetune configurations.
-
----
+Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
 ## Features
 
-### Browse & Discover
-- **Registry Browser** — Browse community finetunes from the HF Registry
-- **Search & Filter** — Search by name, description, author, or tags; filter by architecture
-- **Card UI** — Scrollable card view with descriptions, URLs, LoRAs, and tag badges
-- **URL Validation** — Check URL reachability with per-URL green/red status indicators
+| Tab | Functionality |
+|---|---|
+| **Browse** | Refresh registry, search/architecture/tag filter, per-URL validation, download, improve/create variant |
+| **Create / Edit** | Full tabbed form matching FINETUNES.md spec, Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete |
+| **Local** | Visual card browser, load & switch, delete, export via DownloadButton, import .json, upload to registry, file management |
+| **Upload** | Pick a local finetune from dropdown, preview its JSON, push to HF community registry |
+| **CivitAI** | Search CivitAI by query/type/base model, browse results with version details, one-click URL fill into editor |
 
-### Load & Switch
-- **Download & Switch** — Download a finetune JSON and immediately activate it in Wan2GP
-- **Download** — Download locally without switching the active model
-- **Pre-Download** — Download checkpoint/LoRA files before loading
+## Install
 
-### Create, Edit & Improve
-- **Full Finetune Editor** — Tabbed interface: URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings
-- **Markdown Toolbar** — Bold, Italic, Heading, List, Link, Code buttons
-- **Auto-ID** — Automatic ID generation with deduplication
-- **Creator/Editor Mode** — Context-sensitive action buttons
-- **Improve / Create Variant** — Create variant from registry, pre-fill editor
-- **Tags & Categories** — Comma-separated tags with badge display and filtering
+### Zip (quick)
+1. Download `wan2gp-finetune-manager.zip`
+2. Extract to `C:\Users\gjaku\Wan2GP\plugins\wan2gp-finetune-manager`
+3. Restart Wan2GP
 
-### CivitAI Integration
-- **CivitAI Browser** — Search CivitAI models directly from Wan2GP
-- **Filter & Browse** — Filter by type (Checkpoint, LoRA) and base model
-- **One-Click Fill** — Select a version, fill the download URL into the editor
+### Git (for updates)
+1. Clone `https://github.com/GKartist75/Wan2GP-finetune-manager` into `plugins/`
+2. Restart Wan2GP
 
-### Upload & Share
-- **Upload to HF Registry** — Contribute finetune JSONs to the community registry
-- **Index Integration** — Automatic visibility in the Browse tab
-- **Tags included** — Full metadata in registry entries
+## Upload to Registry
 
----
+The plugin ships with a registry token. Anyone can upload finetune JSONs to the community registry at `GKartist75/wan2gp-finetunes`. No account or collaborator setup needed.
 
-## Installation
+## Files
 
-1. Open Wan2GP → **Plugins** tab → **Available Plugins**
-2. Find "Finetune Manager" and click **Enable**
-
-Or manually copy the `wan2gp-finetune-manager` folder into your Wan2GP `plugins/` directory.
-
----
-
-## Usage
-
-1. Click the **Finetune Manager** tab
-2. Click **Refresh Registry** to load finetunes
-3. Click a card to select it
-4. Choose: **Download**, **Download & Switch**, or **Improve / Create Variant**
-
----
-
-## Development
-
-```bash
-pytest test_plugin.py -v    # 147 unit tests
 ```
-
----
-
-## License
-
-MIT License — see [LICENSE](./LICENSE)
-
----
-
-Made for the Wan2GP community by GKartist75
-
----
+wan2gp-finetune-manager/
+├── __init__.py
+├── config.json           # Registry write token (renew at huggingface.co/settings/tokens)
+├── plugin.py             # All plugin logic (1800+ lines)
+├── plugin_info.json      # Plugin metadata v3.2.0
+├── test_plugin.py        # 152 unit tests
+├── CHANGELOG.md          # Version history
+└── sync.ps1              # Dev deployment script (not needed for users)
+```
 
 ## 📸 Showcase: Create/Edit Tab Redesign
 
@@ -86,13 +48,11 @@ Made for the Wan2GP community by GKartist75
 - **Tabbed Layout** — 6 sub-tabs: URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings
 - **Auto-ID** — Sanitizes input, generates ID from source model + finetune name, deduplicates
 - **Markdown Toolbar** — Bold, Italic, Heading, List, Link, Code buttons in description fields
-- **Creator/Editor Mode** — Source Model presence toggles between creator and editor action rows
-- **URL Validation** — Per-URL green/red status; pre-download missing files
-- **Import/Export** — Import from JSON, Export via download button, two-step Delete confirmation
-
----
+- **Creator/Editor Mode** — Source Model presence toggles between creator (Create/Create & New/Cancel) and editor (Save/Export/Save & Upload/Delete/Cancel) action rows
+- **URL Validation** — Per-URL green/red status with HEAD+GET+RANGE fallback; pre-download missing files
+- **Import/Export** — Import from JSON, Export via DownloadButton, two-step Delete confirmation
 
 ## 🔗 Links
 
 - **GitHub**: https://github.com/GKartist75/Wan2GP-finetune-manager
-- **HF Registry**: https://huggingface.co/spaces/GKartist75/wan2gp-finetunes — browse the finetune registry live
+- **HF Registry**: https://huggingface.co/spaces/GKartist75/wan2gp-finetunes — browse the finetune registry live with search/filter and click-to-expand JSON details

@@ -380,47 +380,12 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
 # ═══════════════════════════════════════════════════════════════════
 
 def _hf_upload(fin_id, json_data):
+    """Upload a finetune JSON to the HF Space.
+    No index.json management -- the Browse tab discovers files dynamically."""
     api = HfApi(token=REGISTRY_TOKEN)
     api.upload_file(
         path_or_fileobj=json.dumps(json_data, indent=2).encode(),
         path_in_repo=f"finetunes/{fin_id}.json",
-        repo_id=REGISTRY_SPACE, repo_type="space")
-    raw = api.hf_hub_download(repo_id=REGISTRY_SPACE, filename="index.json",
-                              repo_type="space")
-    with open(raw) as f:
-        idx = json.load(f)
-    m = json_data.get("model", {})
-    tags_entry = m.get("tags", [])
-    if isinstance(tags_entry, str):
-        tags_entry = [t.strip() for t in tags_entry.split(",") if t.strip()]
-    entry = {
-        "id": fin_id,
-        "name": m.get("name", fin_id),
-        "author": m.get("author", "community"),
-        "version": m.get("version", "1.0.0"),
-        "architecture": m.get("architecture", ""),
-        "description": m.get("description", ""),
-        "source": m.get("finetune_source_model"),
-        "URLs": m.get("URLs", []),
-        "loras": m.get("loras", []),
-        "loras_multipliers": m.get("loras_multipliers", []),
-        "tags": tags_entry,
-        "default_settings": {
-            "num_inference_steps": json_data.get("num_inference_steps",
-                m.get("num_inference_steps", 30)),
-            "guidance_scale": json_data.get("guidance_scale",
-                m.get("guidance_scale", 5.0))
-        }
-    }
-    fins = idx.setdefault("finetunes", [])
-    i = next((i for i, f in enumerate(fins) if f.get("id") == fin_id), None)
-    if i is not None:
-        fins[i] = entry
-    else:
-        fins.append(entry)
-    api.upload_file(
-        path_or_fileobj=json.dumps(idx, indent=2).encode(),
-        path_in_repo="index.json",
         repo_id=REGISTRY_SPACE, repo_type="space")
 
 
@@ -429,6 +394,67 @@ def _fetch_registry_json(fin_id):
         f"{DEFAULT_REGISTRY}/finetunes/{fin_id}.json", timeout=10)
     r.raise_for_status()
     return r.json()
+
+
+def _fetch_dynamic_registry():
+    """Dynamically list all finetunes from the HF Space by scanning
+    actual files. No index.json needed -- always in sync."""
+    try:
+        api = HfApi()
+        files = api.list_repo_files(
+            repo_id=REGISTRY_SPACE, repo_type="space")
+        fin_files = [
+            f for f in files
+            if f.startswith("finetunes/") and f.endswith(".json")]
+    except Exception:
+        return []
+    fins = []
+    for path in sorted(fin_files):
+        fid = path[len("finetunes/"):-len(".json")]
+        try:
+            r = requests.get(
+                f"{DEFAULT_REGISTRY}/finetunes/{fid}.json", timeout=10)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            m = data.get("model", {})
+            tags_entry = m.get("tags", [])
+            if isinstance(tags_entry, str):
+                tags_entry = [t.strip() for t in
+                              tags_entry.split(",") if t.strip()]
+            if isinstance(tags_entry, list):
+                tags_entry = [t for t in tags_entry if t]
+            urls = m.get("URLs", [])
+            if isinstance(urls, str):
+                urls = [urls]
+            loras = m.get("loras", [])
+            if isinstance(loras, str):
+                loras = [loras]
+            entry = {
+                "id": fid,
+                "name": m.get("name", fid),
+                "author": m.get("author", "community"),
+                "version": m.get("version", "1.0.0"),
+                "architecture": m.get("architecture", ""),
+                "description": m.get("description", ""),
+                "source": m.get("finetune_source_model"),
+                "URLs": urls,
+                "loras": loras,
+                "loras_multipliers": m.get("loras_multipliers", []),
+                "tags": tags_entry,
+                "default_settings": {
+                    "num_inference_steps": data.get(
+                        "num_inference_steps",
+                        m.get("num_inference_steps", 30)),
+                    "guidance_scale": data.get(
+                        "guidance_scale",
+                        m.get("guidance_scale", 5.0))
+                }
+            }
+            fins.append(entry)
+        except Exception:
+            continue
+    return fins
 
 
 def _write_finetune(fin_id, data):
@@ -475,7 +501,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
     def create_ui(self, api_session):
         gr.HTML(f"<style>{CARD_CSS}</style>")
         registry = gr.State([])
-        gr.Markdown(f"**Finetune Manager v{PLUGIN_VERSION}**")
+        gr.Markdown(f"**Finetune Manager v{PLUGIN_VERSION}** — "
+                    f"[HF Registry](https://huggingface.co/spaces/{REGISTRY_SPACE})")
 
         with gr.Tabs() as fm_tabs:
 
@@ -655,13 +682,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return sorted(seen)
 
                 def _do_refresh():
-                    try:
-                        r = requests.get(
-                            f"{DEFAULT_REGISTRY}/index.json", timeout=10)
-                        r.raise_for_status()
-                        fins = r.json().get("finetunes", [])
-                    except Exception:
-                        fins = []
+                    fins = _fetch_dynamic_registry()
                     html, cnt = _fmt_cards(fins, "", "All", "", "")
                     tags = _all_tags(fins)
                     return (fins, "", html, cnt,
@@ -969,14 +990,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 with gr.Row(visible=True) as fin_creator_actions:
                     fin_create = gr.Button("Create", variant="primary")
                     fin_create_new = gr.Button("Create & New")
-                    fin_cancel = gr.Button("Cancel")
+                    fin_cancel_create = gr.Button("Cancel")
                 with gr.Row(visible=False) as fin_editor_actions:
                     fin_save = gr.Button(
                         "Save Locally", variant="primary")
                     fin_export = gr.DownloadButton("Export", value=None)
                     fin_save_up = gr.Button("Save & Upload")
                     fin_del = gr.Button("Delete", variant="stop")
-                    fin_cancel = gr.Button("Cancel")
+                    fin_cancel_edit = gr.Button("Cancel")
                 fin_status = gr.Textbox(label="Status")
                 fin_del_confirm = gr.Row(visible=False)
                 with fin_del_confirm:
@@ -1385,7 +1406,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             + [gr.update(visible=True),
                                gr.update(visible=False)])
 
-                fin_cancel.click(
+                fin_cancel_create.click(
+                    fn=_cancel_action,
+                    outputs=(ALL_INPUTS + [fin_status]
+                             + [fin_creator_actions, fin_editor_actions]),
+                    queue=False)
+                fin_cancel_edit.click(
                     fn=_cancel_action,
                     outputs=(ALL_INPUTS + [fin_status]
                              + [fin_creator_actions, fin_editor_actions]),
@@ -1428,10 +1454,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
             # ── LOCAL ──
             with gr.TabItem("Local", id="local"):
-                l_refresh = gr.Button("Refresh")
-                l_list = gr.Dropdown(
-                    label="Local Finetunes", choices=[],
-                    interactive=True, allow_custom_value=True)
+                l_refresh = gr.Button("Refresh", variant="primary")
+                l_sel_id = gr.Textbox(
+                    visible=False, elem_id="l-selected", value="")
+                l_cards = gr.HTML(
+                    "<div style='color:#9ca3af;text-align:center;"
+                    "padding:32px'>Click Refresh to list local finetunes</div>")
                 l_detail = gr.JSON(label="Content")
                 with gr.Row():
                     l_load = gr.Button(
@@ -1450,6 +1478,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 gr.Markdown(
                     "Upload a local finetune JSON to "
                     "the community registry")
+                with gr.Row():
+                    u_refresh = gr.Button("Refresh")
                 u_list = gr.Dropdown(
                     label="Local Finetune", choices=[],
                     interactive=True, allow_custom_value=True)
@@ -1548,8 +1578,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 if not p.exists():
                     return [], "*No finetunes directory*"
                 fs = sorted(p.glob("*.json"))
+                plural = "" if len(fs) == 1 else "s"
                 return ([(f.stem, f.stem) for f in fs],
-                        f"**{len(fs)} local finetunes**")
+                        f"**{len(fs)} local finetune{plural}**")
 
             def _loc_detail(fid):
                 if not fid:
@@ -1559,12 +1590,122 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return {"error": "not found"}
                 return json.loads(p.read_text(encoding="utf-8"))
 
+            def _fmt_local_cards():
+                p = Path(FINETUNES_DIR)
+                if not p.exists():
+                    return ("<div style='color:#9ca3af;text-align:center;"
+                            "padding:32px'>No finetunes directory</div>",
+                            "*No finetunes directory*")
+                fs = sorted(p.glob("*.json"))
+                if not fs:
+                    return ("<div style='color:#9ca3af;text-align:center;"
+                            "padding:32px'>No local finetunes</div>",
+                            "**0 local finetunes**")
+                _h = ['<div class="fm-cards-container">']
+                for fpath in fs:
+                    fid = fpath.stem
+                    try:
+                        data = json.loads(
+                            fpath.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = {}
+                    m = data.get("model", {})
+                    name = html.escape(m.get("name", fid) or fid)
+                    arch = html.escape(
+                        m.get("architecture", "") or "")
+                    author = html.escape(
+                        m.get("author", "") or "local")
+                    desc = html.escape(
+                        (m.get("description", "") or "")[:300])
+                    ftags = m.get("tags", [])
+                    if isinstance(ftags, str):
+                        ftags = [t.strip() for t in ftags.split(",")
+                                 if t.strip()]
+                    tags_badges = ""
+                    if ftags:
+                        tags_badges = '<div style="margin-top:2px">'
+                        for t in ftags[:4]:
+                            et = html.escape(t.strip())
+                            tags_badges += (
+                                f'<span class="fm-badge">{et}</span> ')
+                        if len(ftags) > 4:
+                            tags_badges += (
+                                f'<span style="color:#9ca3af;'
+                                f'font-size:10px">'
+                                f'+{len(ftags)-4}</span>')
+                        tags_badges += '</div>'
+                    fid_safe = (fid.replace("\\", "\\\\")
+                                   .replace("'", "\\'")
+                                   .replace('"', '\\"'))
+                    onclick = (
+                        "document.querySelector('#l-selected textarea')"
+                        f".value='{fid_safe}';"
+                        "document.querySelector('#l-selected textarea')"
+                        ".dispatchEvent(new Event('input',"
+                        "{bubbles:true}))")
+                    urls = m.get("URLs", [])
+                    if isinstance(urls, str):
+                        urls = [urls]
+                    files_html = ""
+                    if urls:
+                        link_parts = []
+                        for u in urls[:3]:
+                            eu = html.escape(u)
+                            short = (u.rstrip("/").split("/")[-1]
+                                     if "/" in u else u)
+                            if len(short) > 50:
+                                short = short[:47] + "..."
+                            link_parts.append(
+                                f'<a href="{eu}" target="_blank" '
+                                f'rel="noopener">'
+                                f'{html.escape(short)}</a>')
+                        files_html = ('<div class="fm-card-files">' +
+                                      " ".join(link_parts))
+                        if len(urls) > 3:
+                            files_html += (
+                                f' <span style="color:#9ca3af">'
+                                f'+{len(urls)-3} more</span>')
+                        files_html += '</div>'
+                    loras = m.get("loras", [])
+                    if isinstance(loras, str):
+                        loras = [loras]
+                    loras_html = ""
+                    if loras:
+                        loras_html = (
+                            '<div class="fm-card-loras">'
+                            '<b>LoRAs:</b> ')
+                        loras_html += " ".join(
+                            html.escape(l) for l in loras[:3])
+                        if len(loras) > 3:
+                            loras_html += (
+                                f' <span style="color:#9ca3af">'
+                                f'+{len(loras)-3} more</span>')
+                        loras_html += '</div>'
+                    _h.append(
+                        f'<div class="fm-card" onclick="{onclick}">'
+                        f"<div class='fm-card-title'>{name}</div>"
+                        f"<div class='fm-card-meta'>"
+                        f"<span class='fm-badge'>{html.escape(arch) or 'finetune'}</span> "
+                        f"{author}</div>"
+                        f"<div class='fm-card-desc'>{desc}</div>"
+                        f"{tags_badges}{files_html}{loras_html}"
+                        f"</div>")
+                _h.append('</div>')
+                plural = "" if len(fs) == 1 else "s"
+                return ("".join(_h),
+                        f"**{len(fs)} local finetune{plural}**")
+
             l_refresh.click(
-                fn=_loc_list, outputs=[l_list, l_status])
-            l_list.change(
-                fn=_loc_detail, inputs=[l_list], outputs=[l_detail])
+                fn=_fmt_local_cards,
+                outputs=[l_cards, l_status])
+            l_sel_id.input(
+                fn=_loc_detail, inputs=[l_sel_id],
+                outputs=[l_detail])
+            u_refresh.click(
+                fn=_loc_list, outputs=[u_list, u_status])
             u_list.change(
-                fn=_loc_detail, inputs=[u_list], outputs=[u_preview])
+                fn=_loc_detail, inputs=[u_list],
+                outputs=[u_preview])
 
             def _loc_load(fid):
                 if not fid:
@@ -1582,7 +1723,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 return f"Switched to '{fid}'", t, tab
 
             l_load.click(
-                fn=_loc_load, inputs=[l_list],
+                fn=_loc_load, inputs=[l_sel_id],
                 outputs=[l_status, self.model_choice_target,
                          self.main_tabs])
 
@@ -1600,9 +1741,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 return f"Deleted {fid}"
 
             l_del.click(
-                fn=_loc_del, inputs=[l_list], outputs=[l_status])
+                fn=_loc_del, inputs=[l_sel_id],
+                outputs=[l_status])
 
-            l_export_file = gr.File(label="Download", visible=False)
+            l_export_btn = gr.DownloadButton("Export JSON", value=None)
 
             def _loc_export_detail(fid):
                 if not fid:
@@ -1612,9 +1754,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return {"error": "not found"}, None
                 return json.loads(p.read_text(encoding="utf-8")), str(p)
 
+            l_export_btn.click(
+                fn=_loc_export_detail, inputs=[l_sel_id],
+                outputs=[l_detail, l_export_btn])
             l_export.click(
-                fn=_loc_export_detail, inputs=[l_list],
-                outputs=[l_detail, l_export_file])
+                fn=_loc_export_detail, inputs=[l_sel_id],
+                outputs=[l_detail, l_export_btn])
 
             def _loc_import(file):
                 if file is None:
@@ -1661,6 +1806,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 return f"Uploaded '{fid}'"
 
             l_up.click(
-                fn=_up, inputs=[l_list], outputs=[l_status])
+                fn=_up, inputs=[l_sel_id], outputs=[l_status])
             u_btn.click(
                 fn=_up, inputs=[u_list], outputs=[u_status])
