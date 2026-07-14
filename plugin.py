@@ -449,7 +449,8 @@ def _fetch_dynamic_registry():
                     "guidance_scale": data.get(
                         "guidance_scale",
                         m.get("guidance_scale", 5.0))
-                }
+                },
+                "raw": data
             }
             fins.append(entry)
         except Exception:
@@ -719,7 +720,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 def _on_selected(fins, fid):
                     m = next((f for f in fins if f["id"] == fid), None)
-                    return fid, m if m else {}
+                    if m and "raw" in m:
+                        detail = m["raw"]
+                    else:
+                        detail = m if m else {}
+                    return fid, detail
 
                 fm_sel_input.input(
                     fn=_on_selected,
@@ -730,7 +735,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if not detail or not isinstance(detail, dict):
                         return ("<div style='color:#6b7280;padding:4px'>"
                                 "Select a card first</div>")
-                    m = detail
+                    if "model" in detail:
+                        m = detail["model"]
+                    else:
+                        m = detail
                     urls = m.get("URLs", [])
                     if isinstance(urls, str):
                         urls = [urls]
@@ -748,7 +756,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 def _on_selected_clear_validate(fins, fid):
                     m = next((f for f in fins if f["id"] == fid), None)
-                    return fid, m if m else {}, ""
+                    if m and "raw" in m:
+                        detail = m["raw"]
+                    else:
+                        detail = m if m else {}
+                    return fid, detail, ""
 
                 fm_sel_input.input(
                     fn=_on_selected_clear_validate,
