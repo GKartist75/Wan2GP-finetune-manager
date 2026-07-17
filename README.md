@@ -1,4 +1,8 @@
-# Wan2GP Finetune Manager Plugin v3.5.0
+# Wan2GP Finetune Manager Plugin v3.5.0 — Test Version 🧪
+
+> ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
+> - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
+> - **Wan2GP Discord**: [Post in #share-your-best-gen](https://discord.com/channels/1361676211817939125/1527049874699325490)
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
