@@ -1289,6 +1289,8 @@ def _fetch_dynamic_registry_no_cache() -> list[dict]:
     actual files. No index.json needed -- always in sync."""
     try:
         api = HfApi()
+        if REGISTRY_TOKEN and REGISTRY_TOKEN != "test_token_abc":
+            api = HfApi(token=REGISTRY_TOKEN)
         files = api.list_repo_files(repo_id=REGISTRY_SPACE, repo_type="space")
         fin_files = [
             f for f in files if f.startswith("finetunes/") and f.endswith(".json")
