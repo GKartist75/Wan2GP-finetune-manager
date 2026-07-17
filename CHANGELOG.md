@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.5.1 (2026-08-17)
+
+### Fixed
+- **Browse registry listing now uses the configured token** — `_fetch_dynamic_registry_no_cache()` was creating `HfApi()` without the token, so `list_repo_files()` ran unauthenticated and returned nothing. Now passes `REGISTRY_TOKEN` when available, matching the pattern already used in upload.
+
+### Security
+- **config.json is now gitignored** — tokens are no longer tracked in git to prevent accidental secret leaks. New users create their own `config.json` from `config.example.json`.
+
+### Changed
+- Version bumped to 3.5.1
+
 ## v3.5.0 (2026-07-17)
 
 ### Added

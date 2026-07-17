@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.5.0 — Test Version 🧪
+# Wan2GP Finetune Manager Plugin v3.5.1 — Test Version 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.5.0** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.5.1** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Features
 
@@ -34,16 +34,31 @@ Community finetune registry plugin for Wan2GP. Browse, load, create, improve, an
 ### Alternative — Manual
 Clone or download into `plugins/finetune_manager`, then restart Wan2GP.
 
-## Upload to Registry
+## Registry Token Setup
 
-The plugin ships with a registry token. Anyone can upload finetune JSONs to the community registry at `GKartist75/wan2gp-finetunes`. No account or collaborator setup needed.
+To upload finetunes to the registry (`GKartist75/wan2gp-finetunes`) or refresh Browse, you need a Hugging Face access token:
+
+1. Go to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+2. Click **New token** — name it anything (e.g. `wan2gp-fm`), set **write** permissions
+3. Copy the token and create a `config.json` file in the plugin folder:
+
+   ```json
+   {"registry_token": "hf_YOUR_TOKEN_HERE"}
+   ```
+
+   See [`config.example.json`](./config.example.json).
+
+Alternatively, run `huggingface-cli login` in your terminal — the plugin falls back to cached credentials.
+
+> ⚠️ `config.json` is gitignored and won't be committed. Your token stays local.
 
 ## Files
 
 ```
 wan2gp-finetune-manager/
 ├── __init__.py
-├── config.json          # Registry write token (renew at huggingface.co/settings/tokens)
+├── config.example.json  # Registry token template (copy to config.json)
+├── config.json          # Registry write token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
 ├── plugin_info.json     # Plugin metadata v3.5.0
 ├── CHANGELOG.md         # Version history
