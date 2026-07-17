@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finetune Manager — User Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f1117;
+    color: #e1e7ef;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .container { max-width: 800px; width: 100%; }
+
+  h1 {
+    font-size: 2.2rem;
+    font-weight: 800;
+    text-align: center;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #a78bfa, #60a5fa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    line-height: 1.2;
+  }
+  .tagline {
+    text-align: center;
+    color: #6b7280;
+    font-size: 1.05rem;
+    margin-bottom: 48px;
+  }
+  .tagline em { color: #9ca3af; font-style: normal; }
+
+  .intro {
+    background: linear-gradient(135deg, #1a1d27, #1f2233);
+    border: 1px solid #2a2d5a;
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 40px;
+    text-align: center;
+  }
+  .intro p {
+    font-size: 1rem;
+    line-height: 1.7;
+    color: #c8cedb;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  .section {
+    margin-bottom: 36px;
+  }
+  .section h2 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section h2 .emoji { font-size: 1.5rem; }
+
+  .feature-card {
+    background: #1a1d27;
+    border: 1px solid #2a2d3a;
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 12px;
+    transition: border-color 0.2s;
+  }
+  .feature-card:hover { border-color: #3a3d5a; }
+  .feature-card h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .feature-card h3 .badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .badge.browse { background: #60a5fa22; color: #60a5fa; }
+  .badge.edit { background: #a78bfa22; color: #a78bfa; }
+  .badge.local { background: #34d39922; color: #34d399; }
+  .badge.civitai { background: #fbbf2422; color: #fbbf24; }
+  .badge.all { background: #f8717122; color: #f87171; }
+  .feature-card p {
+    font-size: 0.9rem;
+    color: #9ca3af;
+    line-height: 1.6;
+  }
+  .feature-card .step-list {
+    margin-top: 10px;
+    padding: 0;
+    list-style: none;
+  }
+  .feature-card .step-list li {
+    font-size: 0.85rem;
+    color: #9ca3af;
+    padding: 3px 0;
+    padding-left: 20px;
+    position: relative;
+    line-height: 1.5;
+  }
+  .feature-card .step-list li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: #4b5563;
+  }
+
+  .tip-box {
+    background: #1e2030;
+    border: 1px solid #32364a;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-top: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .tip-box .icon { font-size: 1.2rem; flex-shrink: 0; }
+  .tip-box p {
+    font-size: 0.85rem;
+    color: #9ca3af;
+    line-height: 1.5;
+  }
+  .tip-box strong { color: #c8cedb; }
+
+  .quick-start {
+    background: linear-gradient(135deg, #1a1d27, #1f2233);
+    border: 1px solid #2a2d5a;
+    border-radius: 16px;
+    padding: 28px;
+    margin-top: 20px;
+  }
+  .quick-start h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .quick-start ol {
+    padding-left: 20px;
+  }
+  .quick-start ol li {
+    font-size: 0.9rem;
+    color: #c8cedb;
+    padding: 5px 0;
+    line-height: 1.5;
+  }
+  .quick-start ol li strong { color: #e1e7ef; }
+
+  .footer {
+    text-align: center;
+    color: #4b5563;
+    font-size: 0.78rem;
+    margin-top: 48px;
+    padding-bottom: 20px;
+  }
+
+  @media (max-width: 600px) {
+    body { padding: 16px; }
+    h1 { font-size: 1.6rem; }
+    .intro { padding: 20px; }
+    .feature-card { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>✨ Finetune Manager</h1>
+<p class="tagline">A plugin for <em>Wan2GP</em> that lets you discover, create, and share finetunes with the community</p>
+
+<div class="intro">
+  <p>
+    Finetunes are like <strong>presets</strong> or <strong>recipes</strong> — they contain model URLs, settings, and descriptions
+    that make Wan2GP generate a certain style of video. This plugin is your hub for finding new finetunes,
+    making your own, and sharing them with others.
+  </p>
+</div>
+
+<!-- ============ BROWSE ============ -->
+<div class="section">
+  <h2><span class="emoji">🔍</span> Browse — Discover finetunes from the community</h2>
+
+  <div class="feature-card">
+    <h3><span>📡</span> Refresh the registry <span class="badge browse">browse</span></h3>
+    <p>Click <strong>Refresh Registry</strong> to fetch the latest finetunes from the community hub on Hugging Face. You'll see cards with names, descriptions, and tags — just like browsing an app store.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>🔎</span> Search &amp; filter <span class="badge browse">browse</span></h3>
+    <p>Type in the search box to find finetunes by name or description. Use the <strong>Architecture</strong> dropdown to show only t2v, i2v, or other model types. Pick a <strong>Tag</strong> to narrow by topic.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📄</span> Preview details <span class="badge browse">browse</span></h3>
+    <p>Click any card to see its full JSON — all the URLs, LoRAs, settings, and metadata. You can inspect everything before downloading.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>✅</span> Validate URLs <span class="badge browse">browse</span></h3>
+    <p>Not sure if a finetune's model files are still online? Click <strong>Validate URLs</strong> to check every URL in the finetune — it'll tell you which ones work and which are broken.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📥</span> Download <span class="badge browse">browse</span></h3>
+    <p>Found something you like? Click <strong>Download</strong> and it's saved to your local finetunes folder, ready to use in Wan2GP.</p>
+    <ul class="step-list">
+      <li>Select a finetune card</li>
+      <li>Click Download</li>
+      <li>It appears in your Local tab and in Wan2GP's model list</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ CREATE / EDIT ============ -->
+<div class="section">
+  <h2><span class="emoji">✏️</span> Create / Edit — Build or tweak finetunes</h2>
+
+  <div class="feature-card">
+    <h3><span>🆕</span> Create a new finetune <span class="badge edit">create</span></h3>
+    <p>Fill in the form with a name, description, model URLs, LoRAs, and all the settings you want. When you're happy, click <strong>Create</strong> to save it locally or <strong>Save &amp; Upload</strong> to share it with the community.</p>
+    <ul class="step-list">
+      <li>Enter a name (like "My Cinematic Style")</li>
+      <li>Pick an architecture (t2v, i2v, etc.)</li>
+      <li>Add model URLs and LoRAs</li>
+      <li>Tweak settings (steps, guidance, resolution)</li>
+      <li>Save locally or upload to the registry</li>
+    </ul>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📝</span> Edit an existing finetune <span class="badge edit">edit</span></h3>
+    <p>Load any finetune from Browse, Local, or the Import button, and all its fields fill into the form automatically. Change what you want, then save the updated version.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>🚀</span> Improve from registry <span class="badge edit">edit</span></h3>
+    <p>Found a finetune that's almost right? The <strong>Improve</strong> button loads it into the editor so you can tweak it and save your own improved version.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>💾</span> Save &amp; Upload <span class="badge edit">edit</span></h3>
+    <p><strong>Save Locally</strong> keeps it on your machine. <strong>Save &amp; Upload</strong> also publishes it to the community registry so everyone can use it. Uploaded finetunes appear immediately in Browse for others.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📤</span> Export as file <span class="badge edit">edit</span></h3>
+    <p>Click <strong>Export</strong> to download your finetune as a .json file — share it with friends, back it up, or import it later.</p>
+  </div>
+
+  <div class="tip-box">
+    <span class="icon">💡</span>
+    <p><strong>Pro tip:</strong> The editor has sub-tabs — URLs, LoRAs, Resolutions, Settings, Prompt Enhancer, and Help. Everything is organized so you don't get lost in a giant form.</p>
+  </div>
+</div>
+
+<!-- ============ LOCAL ============ -->
+<div class="section">
+  <h2><span class="emoji">📂</span> Local — Manage files on your computer</h2>
+
+  <div class="feature-card">
+    <h3><span>📋</span> See all your local finetunes <span class="badge local">local</span></h3>
+    <p>Click <strong>Refresh</strong> to see every finetune JSON file in your Wan2GP finetunes folder. Each one shows as a card with its name, architecture, and description.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📄</span> Preview any finetune <span class="badge local">local</span></h3>
+    <p>Select a card to see its full contents in the JSON viewer — everything inside the file at a glance.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📂</span> Load into the editor <span class="badge local">local</span></h3>
+    <p>Click <strong>Load &amp; Switch</strong> and the finetune opens in the editor tab, ready to modify. All fields auto-fill.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>🗑️</span> Delete a local finetune <span class="badge local">local</span></h3>
+    <p>Select one and click <strong>Delete</strong> — it asks for confirmation first so you don't accidentally remove something.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>☁️</span> Upload to registry <span class="badge local">local</span></h3>
+    <p>Have a finetune on your machine that you want to share? Select it and click <strong>Upload to Registry</strong> — it publishes to the community hub instantly.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>📥</span> Import from a .json file <span class="badge local">local</span></h3>
+    <p>Got a finetune file from a friend or downloaded elsewhere? Click <strong>Import</strong>, pick the file, and it's added to your local collection. You'll see a preview of its contents before importing.</p>
+    <ul class="step-list">
+      <li>Click the file picker and select a .json file</li>
+      <li>Preview its contents in the viewer</li>
+      <li>Click Import to add it to your local finetunes</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ CIVITAI ============ -->
+<div class="section">
+  <h2><span class="emoji">🎨</span> CivitAI — Pull models from CivitAI</h2>
+
+  <div class="feature-card">
+    <h3><span>🌐</span> Search CivitAI <span class="badge civitai">civitai</span></h3>
+    <p>Search the CivitAI model library directly from the plugin. Type a query (like "fantasy landscape" or "anime style") and see matching results.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>✨</span> Auto-fill into editor <span class="badge civitai">civitai</span></h3>
+    <p>Found a model you like? Click <strong>Fill into Editor</strong> and all its details — URLs, settings, and metadata — are automatically populated in the Create / Edit form. Tweak and save from there.</p>
+  </div>
+
+  <div class="tip-box">
+    <span class="icon">💡</span>
+    <p><strong>Pro tip:</strong> Use CivitAI to find models, then use <strong>Improve</strong> from the Browse tab to pull registry finetunes into the editor. Between the two, you rarely need to type URLs manually.</p>
+  </div>
+</div>
+
+<!-- ============ QUICK START ============ -->
+<div class="quick-start">
+  <h2><span>⚡</span> Quick Start — common workflows</h2>
+  <ol>
+    <li><strong>I want to find and use a finetune</strong> — Go to <strong>Browse → Refresh Registry → Select a card → Download</strong></li>
+    <li><strong>I want to tweak an existing finetune</strong> — <strong>Browse</strong> or <strong>Local → select → Load &amp; Switch → edit fields → Save Locally</strong></li>
+    <li><strong>I want to share my own finetune</strong> — <strong>Create / Edit → fill form → Save &amp; Upload</strong></li>
+    <li><strong>I found a model on CivitAI</strong> — <strong>CivitAI tab → search → Fill into Editor → tweak → Save &amp; Upload</strong></li>
+    <li><strong>I got a .json file from someone</strong> — <strong>Local tab → Import → pick file → Load &amp; Switch</strong></li>
+  </ol>
+</div>
+
+<div class="footer">
+  Finetune Manager v3.5.0 — Wan2GP plugin by GKartist75
+</div>
+
+</div>
+</body>
+</html>
