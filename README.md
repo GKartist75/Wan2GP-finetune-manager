@@ -1,16 +1,18 @@
-# Wan2GP Finetune Manager Plugin v3.2.0
+# Wan2GP Finetune Manager Plugin v3.4.0
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
+
+> **Latest version: v3.4.0** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes)
 
 ## Features
 
 | Tab | Functionality |
 |---|---|
-| **Browse** | Refresh registry, search/architecture/tag filter, per-URL validation, download, improve/create variant |
-| **Create / Edit** | Full tabbed form matching FINETUNES.md spec, Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete |
-| **Local** | Visual card browser, load & switch, delete, export via DownloadButton, import .json, upload to registry, file management |
-| **Upload** | Pick a local finetune from dropdown, preview its JSON, push to HF community registry |
-| **CivitAI** | Search CivitAI by query/type/base model, browse results with version details, one-click URL fill into editor |
+| **Browse** | Refresh registry, search by name/description/author/ID, filter by architecture or tag, click cards for JSON details, validate URLs, download locally, improve/create variant |
+| **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
+| **Local** | Visual card browser, load & switch, delete, export via DownloadButton, import .json, upload to registry |
+| **Upload** | Pick a local finetune from dropdown, preview JSON, upload to community registry |
+| **CivitAI** | Search CivitAI by query/type/base model, browse results with version details, one-click URL fill (routes to LoRA or main checkpoint automatically) |
 
 ## Install
 
@@ -27,8 +29,7 @@ Community finetune registry plugin for Wan2GP. Browse, load, create, improve, an
 5. Restart Wan2GP when prompted
 
 ### Alternative — Manual
-1. Download or clone the repo into `C:\Users\gjaku\Wan2GP\plugins\wan2gp-finetune-manager`
-2. Restart Wan2GP
+Clone or download into `plugins/finetune_manager`, then restart Wan2GP.
 
 ## Upload to Registry
 
@@ -39,25 +40,21 @@ The plugin ships with a registry token. Anyone can upload finetune JSONs to the 
 ```
 wan2gp-finetune-manager/
 ├── __init__.py
-├── config.json           # Registry write token (renew at huggingface.co/settings/tokens)
-├── plugin.py             # All plugin logic (1800+ lines)
-├── plugin_info.json      # Plugin metadata v3.2.0
-├── test_plugin.py        # 152 unit tests
-├── CHANGELOG.md          # Version history
-└── sync.ps1              # Dev deployment script (not needed for users)
+├── config.json          # Registry write token (renew at huggingface.co/settings/tokens)
+├── plugin.py            # All plugin logic (3368 lines, 5 tabs)
+├── plugin_info.json     # Plugin metadata v3.4.0
+├── CHANGELOG.md         # Version history
+└── .gitignore
 ```
 
-## 📸 Showcase: Create/Edit Tab Redesign
+## What's New in v3.4.0
 
-![Create/Edit Tab Redesign](assets/showcase-redesign.svg)
-
-### Redesign Highlights
-- **Tabbed Layout** — 6 sub-tabs: URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings
-- **Auto-ID** — Sanitizes input, generates ID from source model + finetune name, deduplicates
-- **Markdown Toolbar** — Bold, Italic, Heading, List, Link, Code buttons in description fields
-- **Creator/Editor Mode** — Source Model presence toggles between creator (Create/Create & New/Cancel) and editor (Save/Export/Save & Upload/Delete/Cancel) action rows
-- **URL Validation** — Per-URL green/red status with HEAD+GET+RANGE fallback; pre-download missing files
-- **Import/Export** — Import from JSON, Export via DownloadButton, two-step Delete confirmation
+- **Pure data functions** — `build_finetune_dict()` and `extract_finetune_fields()` separated from UI closures, making the data layer testable and importable
+- **File Browser** — all URL and LoRA fields now have a **Browse 📂** button that opens the native file explorer with relevant extension filters
+- **Performance** — model index and disk existence caches eliminate disk reads on every keystroke/dropdown change (no more slow "flashing" on load)
+- **Type integrity** — `loras_multipliers`, `guidance_scale`, `preload_URLs` preserve their original types (int/float/string/list) during round-trips
+- **Surrogate safety** — surrogate characters are stripped before JSON serialisation, preventing orjson crashes
+- **CivitAI fill** — search results now auto-route to the correct field (LoRA or main checkpoint)
 
 ## 🔗 Links
 

@@ -1,5 +1,68 @@
 # Changelog
 
+## v3.4.0 (2026-07-17)
+
+### Added
+- `build_finetune_dict()` / `extract_finetune_fields()` — pure module-level functions
+  extracted from UI closures; testable and importable directly
+- `LocalFilePickerTextbox` with **Browse 📂** button on all 8 URL fields and all 10 LoRA
+  rows — opens native file explorer with extension filters (.safetensors, .ckpt, .pt, etc.)
+- Model index cache (`MODEL_INDEX`) — loads model id → display name once at UI build;
+  eliminates disk reads on every dropdown change (fixes slow "flashing" on load)
+- Disk exists cache (`DISK_EXISTS_CACHE`) — prevents re-stating the same paths on
+  keystroke-level validation calls
+- `_parse_maybe_scalar()` — preserves original type for `preload_URLs` (bare string
+  vs list), `loras` (bare string vs array), and other URL fields
+- Type preservation — `loras_multipliers` values keep their original int/float types;
+  `guidance_scale` preserves int type if source had it as int
+- `_clean_surrogates()` / `_clean_tuple()` — strips surrogate characters (U+D800-U+DFFF)
+  from strings to prevent orjson serialisation crashes
+- `_pop_extra()` — pops known top-level fields from extra_data before round-trip,
+  preventing duplicate keys
+- `_validate_model_ref()` — validates `=modelid` references against the model index
+- `_validate_local_path()` — validates local file paths with cached existence check
+- `_validate_entry()` — unified validation entry point that dispatches to the right
+  validator based on value format (URL, model ref, local path)
+- `_validate_url()` — URL validation with HEAD → GET → RANGE fallback chain
+- `_build_url_validation_html()` — separate HTML builder for validation results display
+- `_get_model_urls()` — extracts all download URLs from a finetune dict
+- `_check_model_download_status()` — checks whether all files in a finetune are present
+- CivitAI `_civitai_extract_fill_data()` — extracts fill data from CivitAI results,
+  routing URLs to the correct field (loras vs main checkpoints)
+- Non-standard top-level keys are now preserved during save/edit round-trips
+  (e.g. `ltx2_pipeline`)
+
+### Changed
+- **Core refactor**: `_build` and `_extract` closures replaced by pure functions
+  `build_finetune_dict()` and `extract_finetune_fields()` — cleaner separation of
+  data logic from UI wiring
+- **File structure simplified** — removed `BLUEPRINT.md`, `LICENSE`, `assets/`,
+  `test_plugin.py`, `test_plugin_extras.py`
+- All URL / LoRA textboxes now show a **Browse** button in addition to the model-ref
+  dropdown — both input methods work side-by-side
+- Inline editor validation uses cached disk / model-index checks for sub-second
+  response; full HEAD reachability is covered by the "Validate All URLs" button
+- LoRA fields use `LocalFilePickerTextbox` filtered to `.safetensors`, `.sft`
+- Validation messages display green (reachable) / gray (skipped) / red (unreachable)
+  with tooltip details
+
+### Fixed
+- Slow dropdown "flashing" on initial load eliminated by model index cache
+- orjson crash on surrogate characters — `_clean_surrogates()` strips them before
+  JSON serialisation
+- Duplicate keys on save — `_pop_extra()` prevents known top-level fields from
+  appearing both in the standard position and appended via extra_data
+- Type corruption — `loras_multipliers` values now preserve original numeric type;
+  `guidance_scale` preserves int if original was int; `preload_URLs` preserves
+  bare string vs list format
+
+### Removed
+- `test_plugin.py` (152 old tests, dependent on deprecated closure wiring)
+- `test_plugin_extras.py` (additional tests for untested functions)
+- `BLUEPRINT.md` (architecture doc, superseded by cleaner code structure)
+- `LICENSE` (MIT, to be re-added per project preference)
+- `assets/` (showcase SVGs, moved to GitHub release assets)
+
 ## v3.2.0 (2026-07-14)
 
 ### Added
