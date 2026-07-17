@@ -1,6 +1,46 @@
 # Changelog
 
-## v3.4.0 (2026-07-17)
+## v3.5.0 (2026-07-17)
+
+### Added
+- **Registry cache with 30s TTL** — `_get_cached_registry()` caches the dynamic registry list
+  in memory so rapid Refresh clicks don't hammer the HF API with N+1 fetches each time
+- **Dark mode support** — CivitAI result cards now use CSS custom properties
+  (`--body-background-fill`, `--body-text-color`, `--border-color-primary`,
+  `--primary-100/500`) instead of hardcoded `#fff`/`#111827`/`#e5e7eb`,
+  making them readable in dark and light themes
+- **Loading spinner CSS** — `.fm-spinner` keyframe animation ready for
+  future Gradio loading-state use
+
+### Changed
+- **Key ordering preserved on upload round-trip** — `build_finetune_dict` now seeds from
+  original `extra_data` key order instead of rebuilding in canonical order. Fields like
+  `prompt`, `num_inference_steps`, `guidance_scale`, `sample_solver` stay at their original
+  positions instead of being moved to the end. Model sub-keys also keep original order.
+- **Removed standalone Upload tab** — the `Upload` tab is redundant since the Local tab's
+  "Upload to Registry" button already provides the same functionality. Removed tab UI,
+  dropdown, preview, and event wiring. The `_up` handler and `_loc_list`/`_loc_detail`
+  functions are preserved (shared with Local tab).
+- **Code deduplication**: extracted 4 shared module-level constants —
+  `URL_VALIDATION_KEYS`, `DOWNLOAD_URL_KEYS`, `URL_FIELD_IDX` — replacing
+  5+ inline definitions of the same URL/LoRA key lists
+- **Code deduplication**: extracted `_collect_url_entries()` helper to
+  replace the identical URL-collection loop that appeared in 3 places
+  (`_browse_validate`, `_on_selected_auto_validate`, `_editor_validate`)
+- **Code deduplication**: extracted `_fmt_card_html_item()` to replace
+  the ~85-line card HTML builder that was duplicated in both Browse tab's
+  `_fmt_cards` and Local tab's `_fmt_local_cards`. Both tabs now call
+  the same shared function with different parameters
+- **Card CSS refresh**: cards now have `border-radius:10px`, smoother
+  `.2s` transitions, `translateY(-1px)` lift on hover, `border-width:2px`
+  for selected state, `flex-wrap` for better responsive layout
+- **Removed unused `shutil` import**
+
+### Fixed
+- CivitAI result cards now respect the app's theme (dark mode readable
+  instead of white-background-only)
+- Missing blank line between `_fmt_cards` and `_all_tags` function
+  definitions (`PEP8` spacing) — 2 lines → 3 lines now properly separated
 
 ### Added
 - `build_finetune_dict()` / `extract_finetune_fields()` — pure module-level functions
