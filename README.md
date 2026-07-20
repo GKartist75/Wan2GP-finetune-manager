@@ -77,8 +77,6 @@ wan2gp-finetune-manager/
 └── .gitignore
 ```
 
-## What's New in v3.5.0
-
 ## What's New in v3.5.1
 
 - **Community uploads via PR** — users without write access to the registry Space can now upload. The plugin auto-detects permission issues and creates a Pull Request instead of failing. [Community Tab](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions)
