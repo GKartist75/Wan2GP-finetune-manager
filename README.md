@@ -36,25 +36,47 @@ Clone or download into `plugins/finetune_manager`, then restart Wan2GP.
 
 ## Registry Token Setup
 
-To upload finetunes to the registry (`GKartist75/wan2gp-finetunes`), you need a Hugging Face token. The plugin automatically detects your permissions:
+A token is only needed to **upload** finetunes — browsing, searching, and downloading from the registry work without one.
 
-- **If you have write access** → uploads directly
-- **If you don't** → creates a **Pull Request** for review
+### Quick Start (1 minute)
 
-1. Get any HF token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — a simple **read** token is enough
-2. Create a `config.json` in the plugin folder:
+1. Get any HF token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+   - A **read-only** token is sufficient for community users
+   - The Space owner needs a **write** token (fine-grained, scoped to `GKartist75/wan2gp-finetunes`)
+
+2. Create `config.json` in the plugin folder (`plugins/Wan2GP-finetune-manager/config.json`):
 
    ```json
    {"registry_token": "hf_YOUR_TOKEN_HERE"}
    ```
 
-   See [`config.example.json`](./config.example.json).
+   Replace `hf_YOUR_TOKEN_HERE` with your actual token. See [`config.example.json`](./config.example.json).
 
-Alternatively, run `huggingface-cli login` in your terminal.
+3. Done! The plugin picks it up automatically after restart.
 
-> ⚠️ `config.json` is gitignored and won't be committed. Your token stays local.
+**Alternative:** Run `huggingface-cli login` in your terminal instead.
 
-> 💡 **How it works:** the plugin tries a direct commit first. If that fails, it falls back to `create_pr=True` which submits a Pull Request.
+> ⚠️ `config.json` is gitignored — your token stays local and will never be committed.
+> 💡 No token? Skip steps 1-3. You can still use Browse, Create/Edit, Local, and CivitAI tabs. Upload will show a clear error asking you to set up your token.
+
+### How It Works
+
+![Upload flow diagram](./hf-upload-flow.svg)
+
+The plugin automatically detects your access level:
+
+| You have… | Upload behavior | Result |
+|---|---|---|
+| **Write token** (Space owner) | Direct commit | ✅ Appears in Browse tab immediately |
+| **Read token** (community) | Pull Request created at [discussions](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions) | 📬 Owner reviews and merges |
+| **No token** | Upload blocked with help message | ❌ Follow Quick Start above to set one up |
+
+**What happens after you upload as a community user:**
+1. The plugin tries a direct commit → fails (no write access)
+2. Automatically falls back to `create_pr=True` → a **Pull Request** is submitted
+3. You'll see a confirmation with a link to the PR
+4. The Space owner reviews your submission and merges it
+5. Once merged, your finetune appears in everyone's Browse tab
 
 ## Files
 

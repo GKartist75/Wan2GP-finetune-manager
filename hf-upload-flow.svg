@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="'Segoe UI', system-ui, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8f9fa"/>
+      <stop offset="100%" stop-color="#e9ecef"/>
+    </linearGradient>
+    <linearGradient id="grad-owner" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+    <linearGradient id="grad-community" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="grad-pr" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="grad-merge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="115%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <filter id="shadow-sm" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#16a34a"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#d97706"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6b7280"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="620" rx="16" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" font-size="22" font-weight="700" fill="#1f2937">How Uploading Finetunes Works</text>
+  <text x="450" y="58" text-anchor="middle" font-size="13" fill="#6b7280">Two paths — one works for everyone</text>
+
+  <!-- ============ LEFT COLUMN: Space Owner ============ -->
+  <rect x="30" y="78" width="410" height="160" rx="12" fill="white" filter="url(#shadow)"/>
+  <rect x="30" y="78" width="410" height="40" rx="12" fill="url(#grad-owner)"/>
+  <rect x="30" y="106" width="410" height="12" fill="url(#grad-owner)"/>
+  <text x="235" y="104" text-anchor="middle" font-size="15" font-weight="700" fill="white">🔑  You have write access to the Space</text>
+
+  <text x="52" y="148" font-size="13" font-weight="600" fill="#374151">Your token:</text>
+  <text x="52" y="166" font-size="13" fill="#6b7280">Fine-grained token scoped to this Space with write permission</text>
+
+  <text x="52" y="192" font-size="13" font-weight="600" fill="#374151">What happens:</text>
+  <text x="52" y="210" font-size="13" fill="#16a34a">✅ Upload is committed directly — appears immediately</text>
+  <text x="52" y="228" font-size="13" fill="#6b7280">No review needed. File shows up in Browse tab right away.</text>
+
+  <!-- ============ RIGHT COLUMN: Community User ============ -->
+  <rect x="460" y="78" width="410" height="160" rx="12" fill="white" filter="url(#shadow)"/>
+  <rect x="460" y="78" width="410" height="40" rx="12" fill="url(#grad-community)"/>
+  <rect x="460" y="106" width="410" height="12" fill="url(#grad-community)"/>
+  <text x="665" y="104" text-anchor="middle" font-size="15" font-weight="700" fill="white">👤  You are a community user</text>
+
+  <text x="482" y="148" font-size="13" font-weight="600" fill="#374151">Your token:</text>
+  <text x="482" y="166" font-size="13" fill="#6b7280">Any HF token works — even a simple read-only token</text>
+
+  <text x="482" y="192" font-size="13" font-weight="600" fill="#374151">What happens:</text>
+  <text x="482" y="210" font-size="13" fill="#2563eb">📬 Upload creates a Pull Request</text>
+  <text x="482" y="228" font-size="13" fill="#6b7280">Space owner reviews and merges it when ready.</text>
+
+  <!-- ============ Common: Starting Point ============ -->
+  <rect x="300" y="268" width="300" height="50" rx="25" fill="white" stroke="#d1d5db" stroke-width="2" filter="url(#shadow-sm)"/>
+  <text x="450" y="300" text-anchor="middle" font-size="14" font-weight="600" fill="#374151">🚀  You click "Upload to Registry"</text>
+
+  <!-- Arrow down from starting point -->
+  <line x1="450" y1="318" x2="450" y2="348" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow-gray)"/>
+
+  <!-- ============ Plugin Token Check ============ -->
+  <rect x="300" y="350" width="300" height="50" rx="25" fill="white" stroke="#d1d5db" stroke-width="2" filter="url(#shadow-sm)"/>
+  <text x="450" y="382" text-anchor="middle" font-size="14" font-weight="600" fill="#374151">🔍  Plugin checks your token</text>
+
+  <!-- Branch arrows -->
+  <line x1="450" y1="400" x2="450" y2="415" stroke="#6b7280" stroke-width="2"/>
+  <line x1="450" y1="415" x2="235" y2="415" stroke="#16a34a" stroke-width="2"/>
+  <line x1="450" y1="415" x2="665" y2="415" stroke="#2563eb" stroke-width="2"/>
+  <line x1="235" y1="415" x2="235" y2="435" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-green)"/>
+  <line x1="665" y1="415" x2="665" y2="435" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+  <!-- Branch labels -->
+  <text x="340" y="430" font-size="12" fill="#16a34a" font-weight="600">Has write access</text>
+  <text x="525" y="430" font-size="12" fill="#2563eb" font-weight="600">No write access</text>
+
+  <!-- ============ Left: Direct Commit ============ -->
+  <rect x="65" y="440" width="340" height="65" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#shadow-sm)"/>
+  <text x="235" y="468" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">📦  Direct Commit</text>
+  <text x="235" y="490" text-anchor="middle" font-size="13" fill="#374151">File uploaded instantly to the registry</text>
+
+  <!-- Arrow down from direct commit -->
+  <line x1="235" y1="505" x2="235" y2="530" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+  <!-- Result: Available -->
+  <rect x="80" y="535" width="310" height="50" rx="10" fill="#22c55e" filter="url(#shadow-sm)"/>
+  <text x="235" y="563" text-anchor="middle" font-size="14" font-weight="700" fill="white">✅  Appears in Browse tab immediately</text>
+  <text x="235" y="579" text-anchor="middle" font-size="11" fill="white">Everyone can see and download it</text>
+
+  <!-- ============ Right: PR Flow ============ -->
+  <rect x="495" y="440" width="340" height="65" rx="10" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow-sm)"/>
+  <text x="665" y="468" text-anchor="middle" font-size="14" font-weight="700" fill="#d97706">📬  Pull Request Created</text>
+  <text x="665" y="490" text-anchor="middle" font-size="13" fill="#374151">Your upload becomes a PR for review</text>
+
+  <!-- Arrow down from PR -->
+  <line x1="665" y1="505" x2="665" y2="522" stroke="#d97706" stroke-width="2" marker-end="url(#arrow-amber)"/>
+
+  <!-- Owner reviews -->
+  <rect x="505" y="527" width="320" height="35" rx="10" fill="white" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow-sm)"/>
+  <text x="665" y="550" text-anchor="middle" font-size="13" font-weight="600" fill="#374151">👁️  Space owner reviews the PR</text>
+
+  <!-- Arrow down from review -->
+  <line x1="665" y1="562" x2="665" y2="572" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-gray)"/>
+
+  <!-- Result: Merged -->
+  <rect x="505" y="577" width="320" height="35" rx="10" fill="#8b5cf6" filter="url(#shadow-sm)"/>
+  <text x="665" y="600" text-anchor="middle" font-size="13" font-weight="700" fill="white">✅  PR merged → appears in Browse tab</text>
+
+  <!-- Footer -->
+  <text x="450" y="615" text-anchor="middle" font-size="11" fill="#9ca3af">No token? The plugin shows an error asking you to set one up in config.json</text>
+</svg>
