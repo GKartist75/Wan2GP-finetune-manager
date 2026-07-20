@@ -1265,17 +1265,29 @@ def _check_upload_token() -> bool:
 
 def _hf_upload(fin_id, json_data):
     """Upload a finetune JSON to the HF Space.
-    No index.json management -- the Browse tab discovers files dynamically."""
+    Tries direct commit first; falls back to PR for community submissions."""
     api = HfApi()
     if REGISTRY_TOKEN and REGISTRY_TOKEN != "test_token_abc":
         api = HfApi(token=REGISTRY_TOKEN)
     safe_id = _sanitize_fin_id(fin_id)
-    api.upload_file(
-        path_or_fileobj=json.dumps(json_data, indent=2).encode(),
-        path_in_repo=f"finetunes/{safe_id}.json",
-        repo_id=REGISTRY_SPACE,
-        repo_type="space",
-    )
+    blob = json.dumps(json_data, indent=2).encode()
+    try:
+        # Try direct commit first (works for Space owner)
+        api.upload_file(
+            path_or_fileobj=blob,
+            path_in_repo=f"finetunes/{safe_id}.json",
+            repo_id=REGISTRY_SPACE,
+            repo_type="space",
+        )
+    except Exception:
+        # Fallback: create a PR (works for community contributors)
+        api.upload_file(
+            path_or_fileobj=blob,
+            path_in_repo=f"finetunes/{safe_id}.json",
+            repo_id=REGISTRY_SPACE,
+            repo_type="space",
+            create_pr=True,
+        )
 
 
 def _fetch_registry_json(fin_id):
