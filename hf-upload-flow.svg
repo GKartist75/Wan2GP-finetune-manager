@@ -51,9 +51,9 @@
   <rect x="30" y="78" width="410" height="160" rx="12" fill="white" filter="url(#shadow)"/>
   <rect x="30" y="78" width="410" height="40" rx="12" fill="url(#grad-owner)"/>
   <rect x="30" y="106" width="410" height="12" fill="url(#grad-owner)"/>
-  <text x="235" y="104" text-anchor="middle" font-size="15" font-weight="700" fill="white">🔑  You have write access to the Space</text>
+  <text x="235" y="104" text-anchor="middle" font-size="15" font-weight="700" fill="white">🔑  Your token has write access</text>
 
-  <text x="52" y="148" font-size="13" font-weight="600" fill="#374151">Your token:</text>
+  <text x="52" y="148" font-size="13" font-weight="600" fill="#374151">Token type:</text>
   <text x="52" y="166" font-size="13" fill="#6b7280">Fine-grained token scoped to this Space with write permission</text>
 
   <text x="52" y="192" font-size="13" font-weight="600" fill="#374151">What happens:</text>
@@ -64,9 +64,9 @@
   <rect x="460" y="78" width="410" height="160" rx="12" fill="white" filter="url(#shadow)"/>
   <rect x="460" y="78" width="410" height="40" rx="12" fill="url(#grad-community)"/>
   <rect x="460" y="106" width="410" height="12" fill="url(#grad-community)"/>
-  <text x="665" y="104" text-anchor="middle" font-size="15" font-weight="700" fill="white">👤  You are a community user</text>
+  <text x="665" y="104" text-anchor="middle" font-size="15" font-weight="700" fill="white">👤  Your token has read-only access</text>
 
-  <text x="482" y="148" font-size="13" font-weight="600" fill="#374151">Your token:</text>
+  <text x="482" y="148" font-size="13" font-weight="600" fill="#374151">Token type:</text>
   <text x="482" y="166" font-size="13" fill="#6b7280">Any HF token works — even a simple read-only token</text>
 
   <text x="482" y="192" font-size="13" font-weight="600" fill="#374151">What happens:</text>

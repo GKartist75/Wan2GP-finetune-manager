@@ -41,8 +41,7 @@ A token is only needed to **upload** finetunes — browsing, searching, and down
 ### Quick Start (1 minute)
 
 1. Get any HF token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-   - A **read-only** token is sufficient for community users
-   - The Space owner needs a **write** token (fine-grained, scoped to `GKartist75/wan2gp-finetunes`)
+   - A **read-only** token is sufficient — you don't need write access
 
 2. Create `config.json` in the plugin folder (`plugins/Wan2GP-finetune-manager/config.json`):
 
@@ -67,8 +66,8 @@ The plugin automatically detects your access level:
 
 | You have… | Upload behavior | Result |
 |---|---|---|
-| **Write token** (Space owner) | Direct commit | ✅ Appears in Browse tab immediately |
-| **Read token** (community) | Pull Request created at [discussions](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions) | 📬 Owner reviews and merges |
+| **Write access** | Direct commit | ✅ Appears in Browse tab immediately |
+| **Read-only token** | Pull Request created at [discussions](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions) | 📬 Owner reviews and merges |
 | **No token** | Upload blocked with help message | ❌ Follow Quick Start above to set one up |
 
 **What happens after you upload as a community user:**
@@ -84,7 +83,7 @@ The plugin automatically detects your access level:
 wan2gp-finetune-manager/
 ├── __init__.py
 ├── config.example.json  # Registry token template (copy to config.json)
-├── config.json          # Registry write token (gitignored — create from config.example.json)
+├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
 ├── plugin_info.json     # Plugin metadata v3.5.0
 ├── CHANGELOG.md         # Version history
