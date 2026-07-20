@@ -36,11 +36,13 @@ Clone or download into `plugins/finetune_manager`, then restart Wan2GP.
 
 ## Registry Token Setup
 
-To upload finetunes to the registry (`GKartist75/wan2gp-finetunes`) or refresh Browse, you need a Hugging Face access token:
+### For the Space Owner (GKartist75)
+
+If you own the registry Space, create a fine-grained token scoped to `GKartist75/wan2gp-finetunes` with **write** permissions:
 
 1. Go to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-2. Click **New token** — name it anything (e.g. `wan2gp-fm`), set **write** permissions
-3. Copy the token and create a `config.json` file in the plugin folder:
+2. Click **New token** → **Fine-grained** → scope it to `GKartist75/wan2gp-finetunes` with write access
+3. Copy the token and create a `config.json` in the plugin folder:
 
    ```json
    {"registry_token": "hf_YOUR_TOKEN_HERE"}
@@ -48,9 +50,18 @@ To upload finetunes to the registry (`GKartist75/wan2gp-finetunes`) or refresh B
 
    See [`config.example.json`](./config.example.json).
 
-Alternatively, run `huggingface-cli login` in your terminal — the plugin falls back to cached credentials.
+### For Community Users
+
+Any Hugging Face account can upload — you don't need write access to the Space. The plugin automatically detects you don't have write permissions and **creates a Pull Request** instead:
+
+1. Get any HF token (create one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — a simple **read** token is enough)
+2. Set it in `config.json` (same format as above) or run `huggingface-cli login`
+3. Upload via the plugin — your submission becomes a PR at [Community Tab](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions)
+4. The Space owner reviews and merges it
 
 > ⚠️ `config.json` is gitignored and won't be committed. Your token stays local.
+
+> 💡 **How it works:** the plugin tries a direct commit first. If that fails (community user), it falls back to `create_pr=True` which submits a Pull Request to the registry.
 
 ## Files
 
@@ -65,6 +76,14 @@ wan2gp-finetune-manager/
 ├── user-guide.html      # Friendly walkthrough of all features
 └── .gitignore
 ```
+
+## What's New in v3.5.0
+
+## What's New in v3.5.1
+
+- **Community uploads via PR** — users without write access to the registry Space can now upload. The plugin auto-detects permission issues and creates a Pull Request instead of failing. [Community Tab](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions)
+- **Security** — `config.json` is now gitignored. Tokens stay local, never in git.
+- **Config template** — `config.example.json` added as a safe template.
 
 ## What's New in v3.5.0
 
