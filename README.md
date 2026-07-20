@@ -40,8 +40,9 @@ A token is only needed to **upload** finetunes — browsing, searching, and down
 
 ### Quick Start (1 minute)
 
-1. Get any HF token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-   - A **read-only** token is sufficient — you don't need write access
+1. Get a **User Access Token (read)** at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+   - Click **New token** → **read** → give it a name → **Create token**
+   - A read-only classic token is all you need — you don't need write access
 
 2. Create `config.json` in the plugin folder (`plugins/Wan2GP-finetune-manager/config.json`):
 
@@ -64,15 +65,12 @@ A token is only needed to **upload** finetunes — browsing, searching, and down
 
 The plugin automatically detects your access level:
 
-| You have… | Upload behavior | Result |
-|---|---|---|
-| **Write access** | Direct commit | ✅ Appears in Browse tab immediately |
-| **Read-only token** | Pull Request created at [discussions](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions) | 📬 Owner reviews and merges |
-| **No token** | Upload blocked with help message | ❌ Follow Quick Start above to set one up |
+| **User Access Token (read)** | Pull Request created at [discussions](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions) | 📬 Owner reviews and merges |
+| **No token** | Upload blocked with help message | ❌ Follow Quick Start to set one up |
 
-**What happens after you upload as a community user:**
-1. The plugin tries a direct commit → fails (no write access)
-2. Automatically falls back to `create_pr=True` → a **Pull Request** is submitted
+**What happens when you upload:**
+1. The plugin uses your token to submit the finetune
+2. Since you don't have write access, it automatically creates a **Pull Request**
 3. You'll see a confirmation with a link to the PR
 4. The Space owner reviews your submission and merges it
 5. Once merged, your finetune appears in everyone's Browse tab
