@@ -36,13 +36,13 @@ Clone or download into `plugins/finetune_manager`, then restart Wan2GP.
 
 ## Registry Token Setup
 
-### For the Space Owner (GKartist75)
+To upload finetunes to the registry (`GKartist75/wan2gp-finetunes`), you need a Hugging Face token. The plugin automatically detects your permissions:
 
-If you own the registry Space, create a fine-grained token scoped to `GKartist75/wan2gp-finetunes` with **write** permissions:
+- **If you have write access** → uploads directly
+- **If you don't** → creates a **Pull Request** for review
 
-1. Go to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-2. Click **New token** → **Fine-grained** → scope it to `GKartist75/wan2gp-finetunes` with write access
-3. Copy the token and create a `config.json` in the plugin folder:
+1. Get any HF token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — a simple **read** token is enough
+2. Create a `config.json` in the plugin folder:
 
    ```json
    {"registry_token": "hf_YOUR_TOKEN_HERE"}
@@ -50,18 +50,11 @@ If you own the registry Space, create a fine-grained token scoped to `GKartist75
 
    See [`config.example.json`](./config.example.json).
 
-### For Community Users
-
-Any Hugging Face account can upload — you don't need write access to the Space. The plugin automatically detects you don't have write permissions and **creates a Pull Request** instead:
-
-1. Get any HF token (create one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — a simple **read** token is enough)
-2. Set it in `config.json` (same format as above) or run `huggingface-cli login`
-3. Upload via the plugin — your submission becomes a PR at [Community Tab](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/discussions)
-4. The Space owner reviews and merges it
+Alternatively, run `huggingface-cli login` in your terminal.
 
 > ⚠️ `config.json` is gitignored and won't be committed. Your token stays local.
 
-> 💡 **How it works:** the plugin tries a direct commit first. If that fails (community user), it falls back to `create_pr=True` which submits a Pull Request to the registry.
+> 💡 **How it works:** the plugin tries a direct commit first. If that fails, it falls back to `create_pr=True` which submits a Pull Request.
 
 ## Files
 
