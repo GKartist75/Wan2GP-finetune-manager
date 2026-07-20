@@ -1253,7 +1253,7 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
 def _check_upload_token() -> bool:
     """Check if we have a valid HF token for registry uploads.
     Returns True if either config has a real token or the HF hub cache has one."""
-    if REGISTRY_TOKEN and REGISTRY_TOKEN != "test_token_abc":
+    if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
         return True
     try:
         api = HfApi()
@@ -1267,7 +1267,7 @@ def _hf_upload(fin_id, json_data):
     """Upload a finetune JSON to the HF Space.
     Tries direct commit first; falls back to PR for community submissions."""
     api = HfApi()
-    if REGISTRY_TOKEN and REGISTRY_TOKEN != "test_token_abc":
+    if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
         api = HfApi(token=REGISTRY_TOKEN)
     safe_id = _sanitize_fin_id(fin_id)
     blob = json.dumps(json_data, indent=2).encode()
@@ -1301,7 +1301,7 @@ def _fetch_dynamic_registry_no_cache() -> list[dict]:
     actual files. No index.json needed -- always in sync."""
     try:
         api = HfApi()
-        if REGISTRY_TOKEN and REGISTRY_TOKEN != "test_token_abc":
+        if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
             api = HfApi(token=REGISTRY_TOKEN)
         files = api.list_repo_files(repo_id=REGISTRY_SPACE, repo_type="space")
         fin_files = [
