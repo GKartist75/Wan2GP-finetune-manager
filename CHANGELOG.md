@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.6.0 (2026-08-17)
+
+### Added
+- **Auto-stamp HF username on upload** — `_stamp_hf_username()` calls `whoami()` and injects the uploader's HuggingFace username into `model.author`. Stamped on both local save and remote upload, so the Browse and Local cards show who created it. The HF Space's card listing already renders `by {author}` — now it shows a real name instead of "community".
+- **URL validation guard on Save & Upload** — `_check_bare_filenames()` blocks uploads that have bare filenames (like `model.safetensors`) instead of full `https://` download URLs. Prevents broken finetunes from reaching the registry.
+- **Hint in URLs tab** — markdown note explaining that only Main Checkpoints need overriding; Text Encoder, VAE, and Preload are inherited from the base model by Wan2GP.
+
+### Changed
+- Version bumped to 3.6.0
+
 ## v3.5.1 (2026-08-17)
 
 ### Fixed
