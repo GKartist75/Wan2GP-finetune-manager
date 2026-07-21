@@ -44,7 +44,7 @@ def _loras_from_json(data: dict) -> tuple[list, str]:
     return loras, lms_str
 
 
-def _write_settings_for_wan2gp(fid: str, data: dict) -> Path:
+def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
     """Build a Wan2GP-compatible settings file from finetune data so
     load_settings_from_file() can parse it and trigger model switching.
 
