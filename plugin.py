@@ -1265,10 +1265,18 @@ def _check_upload_token() -> bool:
 
 def _hf_upload(fin_id, json_data):
     """Upload a finetune JSON to the HF Space.
-    Tries direct commit first; falls back to PR for community submissions."""
+    Tries direct commit first; falls back to PR for community submissions.
+    Auto-stamps the uploader's HF username into model.author."""
     api = HfApi()
     if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
         api = HfApi(token=REGISTRY_TOKEN)
+    try:
+        user = api.whoami()
+        username = user.get("name", "")
+        if username:
+            json_data.setdefault("model", {})["author"] = username
+    except Exception:
+        pass
     safe_id = _sanitize_fin_id(fin_id)
     blob = json.dumps(json_data, indent=2).encode()
     try:
