@@ -2,9 +2,13 @@ import html
 import json
 def _check_bare_filenames(data: dict) -> list[str]:
     """Scan model URL fields for bare filenames that need full download URLs.
-    Returns a list of warnings."""
+    Returns a list of warnings.
+
+    preload_URLs is exempt — it can contain bare model-type names that Wan2GP
+    resolves internally from its own model database.
+    """
     _URL_KEYS = {"URLs", "URLs2", "text_encoder_URLs", "VAE_URLs",
-                 "preload_URLs", "loras", "custom_url_1", "custom_url_2", "custom_url_3"}
+                 "loras", "custom_url_1", "custom_url_2", "custom_url_3"}
     m = data.get("model", {})
     warnings = []
     for key in _URL_KEYS:
@@ -48,18 +52,29 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
     """Build a Wan2GP-compatible settings file from finetune data so
     load_settings_from_file() can parse it and trigger model switching.
 
-    Writes to settings/{fid}_settings.json with model_type + all settings keys.
-    Returns the Path (caller checks .exists() for safety)."""
+    ALL top-level fields in `data` pass through verbatim -- this is already
+    a complete Wan2GP settings JSON (prompt, activated_loras, guidance, steps,
+    resolution, flow_shift, sample_solver, etc.).  Only `model_type` (the
+    finetune ID) is added.  Unrecognized keys are ignored by Wan2GP.
+    """
+    settings = dict(data)
+    settings["model_type"] = fid
+    # Promote finetune-format model.loras / model.loras_multipliers to
+    # Wan2GP-format top-level activated_loras / loras_multipliers.
+    # If top-level already present they win; otherwise pull from model sub-object.
     m = data.get("model", {})
-    settings = {
-        "model_type": fid,
-        "prompt": data.get("prompt", ""),
-        "num_inference_steps": data.get("num_inference_steps", 30),
-        "guidance_scale": data.get("guidance_scale", 5.0),
-        "sample_solver": data.get("sample_solver", ""),
-        "activated_loras": m.get("loras", []),
-        "loras_multipliers": m.get("loras_multipliers", ""),
-    }
+    if "activated_loras" not in settings and "loras" in m:
+        loras = m["loras"]
+        if isinstance(loras, list):
+            settings["activated_loras"] = loras
+        elif isinstance(loras, str):
+            settings["activated_loras"] = [loras]
+    if "loras_multipliers" not in settings and "loras_multipliers" in m:
+        lms = m["loras_multipliers"]
+        if isinstance(lms, list):
+            settings["loras_multipliers"] = " ".join(str(x) for x in lms)
+        else:
+            settings["loras_multipliers"] = str(lms)
     p = Path("settings") / f"{fid}_settings.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(settings, indent=4), encoding="utf-8")
@@ -1526,6 +1541,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
         self.request_global("refresh_model_defs")
         self.request_global("switch_to_model")
         self.request_global("load_settings_from_file")
+        self.request_global("_model_choice_target_value")
         self.request_component("state")
         self.request_component("model_choice_target")
         self.request_component("main_tabs")
@@ -1784,6 +1800,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if hasattr(self, "load_settings_from_file") and settings_path.exists()
                         else (gr.update(), gr.update(), None)
                     )
+                    if not isinstance(target, str):
+                        if hasattr(self, "_model_choice_target_value"):
+                            target = self._model_choice_target_value(fid)
+                        else:
+                            target = gr.update()
                     return f"Loaded '{m.get('name', fid)}' and switched", target, gr.update()
 
                 # ── Browse: Download (no switch) ──
@@ -3399,11 +3420,23 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                     self.refresh_model_defs()
                 settings_path = _write_settings_for_wan2gp(fid, data)
-                refresh, target, _ = (
-                    self.load_settings_from_file(state_value, str(settings_path))
-                    if hasattr(self, "load_settings_from_file") and settings_path.exists()
-                    else (gr.update(), gr.update(), None)
-                )
+                if hasattr(self, "load_settings_from_file"):
+                    refresh, target, _ = self.load_settings_from_file(state_value, str(settings_path))
+                else:
+                    refresh, target = gr.update(), gr.update()
+                # load_settings_from_file returns gr.update() for model_choice_target
+                # when the model type falls back to the current model (because the
+                # finetune ID isn't in base model types).  In that case the form
+                # never re-renders -- without refresh_form_trigger or a unique
+                # model_choice_target, fill_inputs is never called and the loaded
+                # settings (activated_loras etc.) stay invisible.
+                # Force a re-render by giving model_choice_target a unique value
+                # so the .change() chain fires and eventually runs fill_inputs.
+                if not isinstance(target, str):
+                    if hasattr(self, "_model_choice_target_value"):
+                        target = self._model_choice_target_value(fid)
+                    else:
+                        target = gr.update()
                 return f"Switched to '{fid}'", target, gr.update()
 
             l_load.click(
@@ -3518,6 +3551,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if hasattr(self, "load_settings_from_file") and settings_path.exists()
                     else (gr.update(), gr.update(), None)
                 )
+                if not isinstance(target, str):
+                    if hasattr(self, "_model_choice_target_value"):
+                        target = self._model_choice_target_value(fid)
+                    else:
+                        target = gr.update()
                 cards_html, _ = _fmt_local_cards()
                 return f"Imported '{fid}'{overwrite_note}", target, gr.update(), cards_html
 
