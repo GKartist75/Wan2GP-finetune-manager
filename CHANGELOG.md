@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.6.1 (2026-07-22)
+
+### Fixed
+- **LoRAs not loaded on Load & Switch / Import** — finetune-format `model.loras` / `model.loras_multipliers` are now promoted to top-level `activated_loras` / `loras_multipliers` in the Wan2GP settings file written by `_write_settings_for_wan2gp()`. The settings file now contains the fields that `load_settings_from_file()` / `get_settings_from_file()` expect.
+- **Missing Gradio form re-render after model switch** — `_model_choice_target_value(fid)` is now called in all 3 load paths (`_load`, `_loc_load`, `_loc_import`) to produce a unique `fid|timestamp` value for `model_choice_target`. This forces the `.change()` chain (→ `change_model_from_target` → `fill_inputs`) to fire and populate the LoRA tab UI.
+- **preload_URLs bare-filename false positive** — `_check_bare_filenames()` no longer flags bare model identifiers (e.g. `ltx2_22B_distilled`) in `preload_URLs`. Wan2GP resolves these internally from its own model database.
+
+### Changed
+- `setup_ui()` now requests `_model_choice_target_value` from Wan2GP globals for force-refresh.
+- `_check_bare_filenames()` removed `preload_URLs` from checked URL keys.
+- Registry finetune `EasyWan22_FastMix` updated with promoted top-level `activated_loras`.
+
 ## v3.6.0 (2026-08-17)
 
 ### Added
