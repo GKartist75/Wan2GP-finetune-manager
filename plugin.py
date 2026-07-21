@@ -1,5 +1,30 @@
 import html
 import json
+def _check_bare_filenames(data: dict) -> list[str]:
+    """Scan model URL fields for bare filenames that need full download URLs.
+    Returns a list of warnings."""
+    _URL_KEYS = {"URLs", "URLs2", "text_encoder_URLs", "VAE_URLs",
+                 "preload_URLs", "loras", "custom_url_1", "custom_url_2", "custom_url_3"}
+    m = data.get("model", {})
+    warnings = []
+    for key in _URL_KEYS:
+        vals = m.get(key, [])
+        if isinstance(vals, str):
+            vals = [vals]
+        if not isinstance(vals, list):
+            continue
+        for v in vals:
+            if not v or not isinstance(v, str):
+                continue
+            v = v.strip()
+            if not v:
+                continue
+            if v.startswith(("http://", "https://", "=")):
+                continue
+            warnings.append(f"'{key}' has a bare filename: '{v}' — needs a full https:// URL for Wan2GP auto-download")
+    return warnings
+
+
 import re as _re
 import urllib.error
 import urllib.parse
@@ -2758,6 +2783,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if not _check_upload_token():
                         return "No HF token available — run `huggingface-cli login` or set registry_token in config.json"
                     data = _build(*vals, extra_data=extra_data)
+                    bare_warnings = _check_bare_filenames(data)
+                    if bare_warnings:
+                        return "⚠️ Cannot save & upload:\n" + "\n".join(bare_warnings)
                     _stamp_hf_username(data)
                     _write_finetune(id_, data)
                     try:
