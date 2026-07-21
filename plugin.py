@@ -44,6 +44,26 @@ def _loras_from_json(data: dict) -> tuple[list, str]:
     return loras, lms_str
 
 
+def _apply_loras_to_settings_file(fid: str, data: dict) -> None:
+    """Write loras from finetune data into Wan2GP's per-model settings file
+    *before* switch_to_model so the form re-render picks them up from
+    ui_defaults['activated_loras'] / ['loras_multipliers']."""
+    loras, lms_str = _loras_from_json(data)
+    if not loras and not lms_str:
+        return
+    p = Path("settings") / f"{fid}_settings.json"
+    if p.exists():
+        ui_defaults = json.loads(p.read_text(encoding="utf-8"))
+    else:
+        ui_defaults = {}
+    if loras:
+        ui_defaults["activated_loras"] = loras
+    if lms_str:
+        ui_defaults["loras_multipliers"] = lms_str
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(ui_defaults, indent=4), encoding="utf-8")
+
+
 import re as _re
 import urllib.error
 import urllib.parse
@@ -1744,15 +1764,16 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 def _load(fins, fid):
                     if not fid:
-                        return "Select a card", gr.update(), gr.update(), gr.update(), gr.update()
+                        return "Select a card", gr.update(), gr.update()
                     m = next((f for f in fins if f["id"] == fid), None)
                     if not m:
-                        return f"'{fid}' not found", gr.update(), gr.update(), gr.update(), gr.update()
+                        return f"'{fid}' not found", gr.update(), gr.update()
                     try:
                         data = _fetch_registry_json(fid)
                     except Exception as e:
-                        return f"Error: {e}", gr.update(), gr.update(), gr.update(), gr.update()
+                        return f"Error: {e}", gr.update(), gr.update()
                     _write_finetune(fid, data)
+                    _apply_loras_to_settings_file(fid, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
                     t, tab = (
@@ -1760,8 +1781,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if hasattr(self, "switch_to_model")
                         else (gr.update(), gr.update())
                     )
-                    lor, lms = _loras_from_json(data)
-                    return f"Loaded '{m.get('name', fid)}' and switched", t, tab, gr.update(value=lor), gr.update(value=lms)
+                    return f"Loaded '{m.get('name', fid)}' and switched", t, tab
 
                 # ── Browse: Download (no switch) ──
                 def _browse_dl(fins, fid):
@@ -2573,7 +2593,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 b_load.click(
                     fn=_load,
                     inputs=[registry, b_sel_id],
-                    outputs=[b_status, self.model_choice_target, self.main_tabs, self.loras_choices, self.loras_multipliers],
+                    outputs=[b_status, self.model_choice_target, self.main_tabs],
                 )
 
                 # Wire Improve / Create Variant button (needs ALL_INPUTS defined)
@@ -2763,9 +2783,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if extra_data is not None:
                         vals = remaining
                     if not id_:
-                        return "Enter an ID", gr.update(), gr.update(), gr.update(), gr.update()
+                        return "Enter an ID", gr.update(), gr.update()
                     data = _build(*vals, extra_data=extra_data)
                     _write_finetune(id_, data)
+                    _apply_loras_to_settings_file(id_, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
                     t, tab = (
@@ -2773,13 +2794,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if hasattr(self, "switch_to_model")
                         else (gr.update(), gr.update())
                     )
-                    lor, lms = _loras_from_json(data)
-                    return f"Created {id_}", t, tab, gr.update(value=lor), gr.update(value=lms)
+                    return f"Created {id_}", t, tab
 
                 fin_create.click(
                     fn=_create_action,
                     inputs=list(ALL_INPUTS) + [fin_extra_data],
-                    outputs=[fin_status, self.model_choice_target, self.main_tabs, self.loras_choices, self.loras_multipliers],
+                    outputs=[fin_status, self.model_choice_target, self.main_tabs],
                 )
 
                 def _export_action(id_, *vals):
@@ -3356,11 +3376,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
             def _loc_load(fid):
                 if not fid:
-                    return "Select one", gr.update(), gr.update(), gr.update(), gr.update()
+                    return "Select one", gr.update(), gr.update()
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
-                    return "Not found", gr.update(), gr.update(), gr.update(), gr.update()
+                    return "Not found", gr.update(), gr.update()
                 data = json.loads(p.read_text(encoding="utf-8"))
+                _apply_loras_to_settings_file(fid, data)
                 if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                     self.refresh_model_defs()
                 t, tab = (
@@ -3368,13 +3389,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if hasattr(self, "switch_to_model")
                     else (gr.update(), gr.update())
                 )
-                lor, lms = _loras_from_json(data)
-                return f"Switched to '{fid}'", t, tab, gr.update(value=lor), gr.update(value=lms)
+                return f"Switched to '{fid}'", t, tab
 
             l_load.click(
                 fn=_loc_load,
                 inputs=[l_sel_id],
-                outputs=[l_status, self.model_choice_target, self.main_tabs, self.loras_choices, self.loras_multipliers],
+                outputs=[l_status, self.model_choice_target, self.main_tabs],
             )
 
             def _loc_del(fid):
@@ -3465,16 +3485,17 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     data = json.loads(Path(s).read_text(encoding="utf-8"))
                 except Exception as e:
                     cards_html, _ = _fmt_local_cards()
-                    return f"Invalid: {e}", gr.update(), gr.update(), cards_html, gr.update(), gr.update()
+                    return f"Invalid: {e}", gr.update(), gr.update(), cards_html
                 if "model" not in data:
                     cards_html, _ = _fmt_local_cards()
-                    return ("Missing 'model'", gr.update(), gr.update(), cards_html, gr.update(), gr.update())
+                    return ("Missing 'model'", gr.update(), gr.update(), cards_html)
                 fid = Path(s).stem
                 existing_path = Path(FINETUNES_DIR) / f"{fid}.json"
                 overwrite_note = (
                     " (overwrote existing)" if existing_path.exists() else ""
                 )
                 _write_finetune(fid, data)
+                _apply_loras_to_settings_file(fid, data)
                 if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                     self.refresh_model_defs()
                 t, tab = (
@@ -3482,14 +3503,13 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if hasattr(self, "switch_to_model")
                     else (gr.update(), gr.update())
                 )
-                lor, lms = _loras_from_json(data)
                 cards_html, _ = _fmt_local_cards()
-                return f"Imported '{fid}'{overwrite_note}", t, tab, cards_html, gr.update(value=lor), gr.update(value=lms)
+                return f"Imported '{fid}'{overwrite_note}", t, tab, cards_html
 
             l_imp_btn.click(
                 fn=_loc_import,
                 inputs=[l_imp_file],
-                outputs=[l_status, self.model_choice_target, self.main_tabs, l_cards, self.loras_choices, self.loras_multipliers],
+                outputs=[l_status, self.model_choice_target, self.main_tabs, l_cards],
             )
 
             def _up(fid):
