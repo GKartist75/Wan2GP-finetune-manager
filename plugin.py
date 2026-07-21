@@ -1263,20 +1263,27 @@ def _check_upload_token() -> bool:
         return False
 
 
-def _hf_upload(fin_id, json_data):
-    """Upload a finetune JSON to the HF Space.
-    Tries direct commit first; falls back to PR for community submissions.
-    Auto-stamps the uploader's HF username into model.author."""
-    api = HfApi()
-    if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
-        api = HfApi(token=REGISTRY_TOKEN)
+def _stamp_hf_username(json_data: dict) -> None:
+    """Look up the authenticated HF user and stamp model.author in-place.
+    Fails silently — upload proceeds without author if whoami() fails."""
     try:
+        api = HfApi()
+        if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
+            api = HfApi(token=REGISTRY_TOKEN)
         user = api.whoami()
         username = user.get("name", "")
         if username:
             json_data.setdefault("model", {})["author"] = username
     except Exception:
         pass
+
+
+def _hf_upload(fin_id, json_data):
+    """Upload a finetune JSON to the HF Space.
+    Tries direct commit first; falls back to PR for community submissions."""
+    api = HfApi()
+    if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
+        api = HfApi(token=REGISTRY_TOKEN)
     safe_id = _sanitize_fin_id(fin_id)
     blob = json.dumps(json_data, indent=2).encode()
     try:
@@ -2751,6 +2758,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if not _check_upload_token():
                         return "No HF token available — run `huggingface-cli login` or set registry_token in config.json"
                     data = _build(*vals, extra_data=extra_data)
+                    _stamp_hf_username(data)
                     _write_finetune(id_, data)
                     try:
                         _hf_upload(id_, data)
@@ -3418,7 +3426,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return "Not found"
-                _hf_upload(fid, json.loads(p.read_text(encoding="utf-8")))
+                data = json.loads(p.read_text(encoding="utf-8"))
+                _stamp_hf_username(data)
+                _hf_upload(fid, data)
                 return f"Uploaded '{fid}'"
 
             l_up.click(fn=_up, inputs=[l_sel_id], outputs=[l_status])
