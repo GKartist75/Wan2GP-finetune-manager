@@ -2365,10 +2365,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 with gr.Row(visible=True) as fin_creator_actions:
                     fin_create = gr.Button("Create", variant="primary")
+                    fin_save_switch = gr.Button("Save & Switch", variant="primary")
                     fin_save_up = gr.Button("Save & Upload")
                     fin_cancel_create = gr.Button("Cancel")
                 with gr.Row(visible=False) as fin_editor_actions:
                     fin_save = gr.Button("Save Locally", variant="primary")
+                    fin_save_switch_ed = gr.Button("Save & Switch", variant="primary")
                     fin_save_up_ed = gr.Button("Save & Upload")
                     fin_export = gr.DownloadButton("Export", value=None)
                     fin_del = gr.Button("Delete", variant="stop")
@@ -2797,6 +2799,16 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return f"Created {id_}", t, tab
 
                 fin_create.click(
+                    fn=_create_action,
+                    inputs=list(ALL_INPUTS) + [fin_extra_data],
+                    outputs=[fin_status, self.model_choice_target, self.main_tabs],
+                )
+                fin_save_switch.click(
+                    fn=_create_action,
+                    inputs=list(ALL_INPUTS) + [fin_extra_data],
+                    outputs=[fin_status, self.model_choice_target, self.main_tabs],
+                )
+                fin_save_switch_ed.click(
                     fn=_create_action,
                     inputs=list(ALL_INPUTS) + [fin_extra_data],
                     outputs=[fin_status, self.model_choice_target, self.main_tabs],
