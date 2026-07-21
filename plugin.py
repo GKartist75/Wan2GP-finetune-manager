@@ -44,24 +44,26 @@ def _loras_from_json(data: dict) -> tuple[list, str]:
     return loras, lms_str
 
 
-def _apply_loras_to_settings_file(fid: str, data: dict) -> None:
-    """Write loras from finetune data into Wan2GP's per-model settings file
-    *before* switch_to_model so the form re-render picks them up from
-    ui_defaults['activated_loras'] / ['loras_multipliers']."""
-    loras, lms_str = _loras_from_json(data)
-    if not loras and not lms_str:
-        return
+def _write_settings_for_wan2gp(fid: str, data: dict) -> Path:
+    """Build a Wan2GP-compatible settings file from finetune data so
+    load_settings_from_file() can parse it and trigger model switching.
+
+    Writes to settings/{fid}_settings.json with model_type + all settings keys.
+    Returns the Path (caller checks .exists() for safety)."""
+    m = data.get("model", {})
+    settings = {
+        "model_type": fid,
+        "prompt": data.get("prompt", ""),
+        "num_inference_steps": data.get("num_inference_steps", 30),
+        "guidance_scale": data.get("guidance_scale", 5.0),
+        "sample_solver": data.get("sample_solver", ""),
+        "activated_loras": m.get("loras", []),
+        "loras_multipliers": m.get("loras_multipliers", ""),
+    }
     p = Path("settings") / f"{fid}_settings.json"
-    if p.exists():
-        ui_defaults = json.loads(p.read_text(encoding="utf-8"))
-    else:
-        ui_defaults = {}
-    if loras:
-        ui_defaults["activated_loras"] = loras
-    if lms_str:
-        ui_defaults["loras_multipliers"] = lms_str
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(ui_defaults, indent=4), encoding="utf-8")
+    p.write_text(json.dumps(settings, indent=4), encoding="utf-8")
+    return p
 
 
 import re as _re
@@ -1523,6 +1525,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
     def setup_ui(self):
         self.request_global("refresh_model_defs")
         self.request_global("switch_to_model")
+        self.request_global("load_settings_from_file")
         self.request_component("state")
         self.request_component("model_choice_target")
         self.request_component("main_tabs")
@@ -1762,7 +1765,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     ],
                 )
 
-                def _load(fins, fid):
+                def _load(state_value, fins, fid):
                     if not fid:
                         return "Select a card", gr.update(), gr.update()
                     m = next((f for f in fins if f["id"] == fid), None)
@@ -1773,15 +1776,15 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     except Exception as e:
                         return f"Error: {e}", gr.update(), gr.update()
                     _write_finetune(fid, data)
-                    _apply_loras_to_settings_file(fid, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
-                    t, tab = (
-                        self.switch_to_model(fid, False)
-                        if hasattr(self, "switch_to_model")
-                        else (gr.update(), gr.update())
+                    settings_path = _write_settings_for_wan2gp(fid, data)
+                    refresh, target, _ = (
+                        self.load_settings_from_file(state_value, str(settings_path))
+                        if hasattr(self, "load_settings_from_file") and settings_path.exists()
+                        else (gr.update(), gr.update(), None)
                     )
-                    return f"Loaded '{m.get('name', fid)}' and switched", t, tab
+                    return f"Loaded '{m.get('name', fid)}' and switched", target, gr.update()
 
                 # ── Browse: Download (no switch) ──
                 def _browse_dl(fins, fid):
@@ -2594,7 +2597,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 # Wire Download & Switch → load into main Media Generator tab
                 b_load.click(
                     fn=_load,
-                    inputs=[registry, b_sel_id],
+                    inputs=[self.state, registry, b_sel_id],
                     outputs=[b_status, self.model_choice_target, self.main_tabs],
                 )
 
@@ -2780,7 +2783,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     + fin_lora_vals,
                 )
 
-                def _create_action(id_, *vals):
+                def _create_action(state_value, id_, *vals):
                     extra_data, remaining = _pop_extra(vals)
                     if extra_data is not None:
                         vals = remaining
@@ -2788,29 +2791,29 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         return "Enter an ID", gr.update(), gr.update()
                     data = _build(*vals, extra_data=extra_data)
                     _write_finetune(id_, data)
-                    _apply_loras_to_settings_file(id_, data)
+                    settings_path = _write_settings_for_wan2gp(id_, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
-                    t, tab = (
-                        self.switch_to_model(id_, False)
-                        if hasattr(self, "switch_to_model")
-                        else (gr.update(), gr.update())
+                    refresh, target, _ = (
+                        self.load_settings_from_file(state_value, str(settings_path))
+                        if hasattr(self, "load_settings_from_file") and settings_path.exists()
+                        else (gr.update(), gr.update(), None)
                     )
-                    return f"Created {id_}", t, tab
+                    return f"Created {id_}", target, gr.update()
 
                 fin_create.click(
                     fn=_create_action,
-                    inputs=list(ALL_INPUTS) + [fin_extra_data],
+                    inputs=[self.state] + list(ALL_INPUTS) + [fin_extra_data],
                     outputs=[fin_status, self.model_choice_target, self.main_tabs],
                 )
                 fin_save_switch.click(
                     fn=_create_action,
-                    inputs=list(ALL_INPUTS) + [fin_extra_data],
+                    inputs=[self.state] + list(ALL_INPUTS) + [fin_extra_data],
                     outputs=[fin_status, self.model_choice_target, self.main_tabs],
                 )
                 fin_save_switch_ed.click(
                     fn=_create_action,
-                    inputs=list(ALL_INPUTS) + [fin_extra_data],
+                    inputs=[self.state] + list(ALL_INPUTS) + [fin_extra_data],
                     outputs=[fin_status, self.model_choice_target, self.main_tabs],
                 )
 
@@ -3386,26 +3389,26 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             l_refresh.click(fn=_fmt_local_cards, outputs=[l_cards, l_status])
             l_sel_id.input(fn=_loc_detail, inputs=[l_sel_id], outputs=[l_detail])
 
-            def _loc_load(fid):
+            def _loc_load(state_value, fid):
                 if not fid:
                     return "Select one", gr.update(), gr.update()
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return "Not found", gr.update(), gr.update()
                 data = json.loads(p.read_text(encoding="utf-8"))
-                _apply_loras_to_settings_file(fid, data)
                 if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                     self.refresh_model_defs()
-                t, tab = (
-                    self.switch_to_model(fid, False)
-                    if hasattr(self, "switch_to_model")
-                    else (gr.update(), gr.update())
+                settings_path = _write_settings_for_wan2gp(fid, data)
+                refresh, target, _ = (
+                    self.load_settings_from_file(state_value, str(settings_path))
+                    if hasattr(self, "load_settings_from_file") and settings_path.exists()
+                    else (gr.update(), gr.update(), None)
                 )
-                return f"Switched to '{fid}'", t, tab
+                return f"Switched to '{fid}'", target, gr.update()
 
             l_load.click(
                 fn=_loc_load,
-                inputs=[l_sel_id],
+                inputs=[self.state, l_sel_id],
                 outputs=[l_status, self.model_choice_target, self.main_tabs],
             )
 
@@ -3481,7 +3484,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 outputs=[l_detail],
             )
 
-            def _loc_import(file):
+            def _loc_import(state_value, file):
                 if file is None:
                     cards_html, _ = _fmt_local_cards()
                     return "Select a .json", gr.update(), gr.update(), cards_html
@@ -3507,20 +3510,20 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     " (overwrote existing)" if existing_path.exists() else ""
                 )
                 _write_finetune(fid, data)
-                _apply_loras_to_settings_file(fid, data)
-                if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
-                    self.refresh_model_defs()
-                t, tab = (
-                    self.switch_to_model(fid, False)
-                    if hasattr(self, "switch_to_model")
-                    else (gr.update(), gr.update())
+                # Build a Wan2GP-compatible settings file and delegate to
+                # Wan2GP's built-in load_settings_from_file for model switching.
+                settings_path = _write_settings_for_wan2gp(fid, data)
+                refresh, target, _ = (
+                    self.load_settings_from_file(state_value, str(settings_path))
+                    if hasattr(self, "load_settings_from_file") and settings_path.exists()
+                    else (gr.update(), gr.update(), None)
                 )
                 cards_html, _ = _fmt_local_cards()
-                return f"Imported '{fid}'{overwrite_note}", t, tab, cards_html
+                return f"Imported '{fid}'{overwrite_note}", target, gr.update(), cards_html
 
             l_imp_btn.click(
                 fn=_loc_import,
-                inputs=[l_imp_file],
+                inputs=[self.state, l_imp_file],
                 outputs=[l_status, self.model_choice_target, self.main_tabs, l_cards],
             )
 
