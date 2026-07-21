@@ -1845,6 +1845,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 with gr.Tabs():
                     with gr.Tab("URLs"):
+                        gr.Markdown(
+                            "**Override only what's different from the base model.** "
+                            "Main Checkpoints = the finetune weights. "
+                            "Text Encoder, VAE, Preload are usually **inherited** from the base model — leave blank unless your finetune replaces them."
+                        )
                         available_models = _list_available_models()
                         model_choices = [
                             (label, mid) for mid, label in available_models
