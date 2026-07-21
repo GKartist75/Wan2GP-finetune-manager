@@ -548,6 +548,14 @@ def build_finetune_dict(
     orig_out = extra_data if isinstance(extra_data, dict) else {}
     if orig_out:
         # Seed with all original top-level keys in order, then overwrite
+        m.setdefault("settings", {})
+        m["settings"].update({
+            "prompt": prompt or "",
+            "num_inference_steps": int(steps),
+            "guidance_scale": float(guid),
+        })
+        if solver:
+            m["settings"]["sample_solver"] = solver
         out: dict = {}
         for k, v in orig_out.items():
             if k != "model":
@@ -569,6 +577,13 @@ def build_finetune_dict(
         # Fresh build — canonical order
         out: dict = {}
         out["model"] = m
+        m["settings"] = {
+            "prompt": prompt or "",
+            "num_inference_steps": int(steps),
+            "guidance_scale": float(guid),
+        }
+        if solver:
+            m["settings"]["sample_solver"] = solver
         out["num_inference_steps"] = int(steps)
         gd = float(guid)
         out["guidance_scale"] = gd
