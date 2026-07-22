@@ -1,5 +1,20 @@
 import html
 import json
+import re as _re
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+import requests
+import gradio as gr
+# Lazy-imported: HfApi is imported inside functions that use it
+# so the plugin can load even if huggingface_hub is missing.
+from shared.utils.plugins import WAN2GPPlugin
+from shared.gradio.local_file_picker import LocalFilePickerTextbox
+import copy
+import time
+
+
 def _check_bare_filenames(data: dict) -> list[str]:
     """Scan model URL fields for bare filenames that need full download URLs.
     Returns a list of warnings.
@@ -29,25 +44,6 @@ def _check_bare_filenames(data: dict) -> list[str]:
     return warnings
 
 
-def _loras_from_json(data: dict) -> tuple[list, str]:
-    """Extract loras and multipliers string from finetune data.
-    Returns (loras_list, multipliers_str). Lora URLs are reduced to
-    basenames so Wan2GP can match them in the lora directory."""
-    m = data.get("model", {})
-    loras = m.get("loras", [])
-    if isinstance(loras, str):
-        loras = [loras]
-    if not isinstance(loras, list):
-        loras = []
-    loras = [_os.path.basename(u.rstrip("/")) for u in loras if u]
-    lms = m.get("loras_multipliers", [])
-    if isinstance(lms, list):
-        lms_str = " ".join(str(x) for x in lms)
-    else:
-        lms_str = str(lms) if lms else ""
-    return loras, lms_str
-
-
 def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
     """Build a Wan2GP-compatible settings file from finetune data so
     load_settings_from_file() can parse it and trigger model switching.
@@ -75,34 +71,24 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
             settings["loras_multipliers"] = " ".join(str(x) for x in lms)
         else:
             settings["loras_multipliers"] = str(lms)
-    p = Path("settings") / f"{fid}_settings.json"
+    safe_id = _re.sub(r"[^A-Za-z0-9_.-]+", "_", fid.strip()).strip("_.-") or "unnamed"
+    p = Path("settings") / f"{safe_id}_settings.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(settings, indent=4), encoding="utf-8")
     return p
 
 
-import re as _re
-import urllib.error
-import urllib.parse
-import urllib.request
-from pathlib import Path
-import requests
-import gradio as gr
-from huggingface_hub import HfApi
-from shared.utils.plugins import WAN2GPPlugin
-from shared.gradio.local_file_picker import LocalFilePickerTextbox
-import copy
-import time
-
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.6.2"
+PLUGIN_VERSION = "3.6.3"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
 FINETUNES_DIR = "finetunes"
 
 _cfg_path = Path(__file__).parent / "config.json"
+_cfg_dir = _cfg_path.parent
+
 REGISTRY_TOKEN = ""
 if _cfg_path.exists():
     try:
@@ -111,7 +97,46 @@ if _cfg_path.exists():
         )
     except Exception:
         pass
+_PLACEHOLDER_TOKENS = {"test_token_abc", "hf_YOUR_TOKEN_HERE"}
+_REGISTRY_TOKEN_VALID = bool(REGISTRY_TOKEN) and REGISTRY_TOKEN not in _PLACEHOLDER_TOKENS
 print(f"[FM] v{PLUGIN_VERSION} Token:{bool(REGISTRY_TOKEN)}")
+
+
+def _open_config_dir():
+    """Open the plugin's config directory in the system file manager."""
+    import os
+    import subprocess
+    import sys
+    d = str(_cfg_dir)
+    if sys.platform == "win32":
+        os.startfile(d)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", d])
+    else:
+        subprocess.Popen(["xdg-open", d])
+
+_TOKEN_SETUP_GUIDE = f"""
+<details style="margin:8px 0;padding:8px 12px;background:#1a1a2e;border:1px solid #eab308;border-radius:8px">
+<summary style="cursor:pointer;font-weight:600;color:#eab308">⚠️ Registry Token Not Configured</summary>
+<div style="margin-top:8px;color:#d1d5db;font-size:13px;line-height:1.6">
+<p>Uploading to the registry and some registry features require a HuggingFace token.
+Follow these steps:</p>
+<ol>
+<li>Go to <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:#60a5fa">huggingface.co/settings/tokens</a></li>
+<li>Click <strong>Create new token</strong> — any role works (Read is sufficient for browsing, Write for uploading)</li>
+<li>Copy the token (starts with <code>hf_</code>)</li>
+<li>Click the <strong>📂 Open plugin folder</strong> button below to open the folder, then open <code>config.json</code> in any text editor and set:</li>
+</ol>
+<pre style="background:#111827;padding:8px 12px;border-radius:6px;font-size:12px">{{
+  "registry_token": "hf_YOUR_TOKEN_HERE"
+}}</pre>
+<p>Replace <code>hf_YOUR_TOKEN_HERE</code> with your actual token.
+<strong>Note:</strong> <code>config.json</code> is in <code>.gitignore</code> — your token stays local.
+<strong>Important:</strong> After adding the token, <strong>restart Wan2GP</strong> for the plugin to pick it up.</p>
+<p>Alternatively, run <code>huggingface-cli login</code> in your terminal to authenticate globally.</p>
+</div>
+</details>
+"""
 
 # Shared with the built-in Finetune Editor
 LORA_FILE_EXTENSIONS = {".safetensors", ".sft"}
@@ -155,14 +180,23 @@ URL_FIELD_IDX = [5, 6, 7, 8, 9, 10, 11, 12]
 _REGISTRY_CACHE: list[dict] | None = None
 _REGISTRY_CACHE_TIME: float = 0
 _REGISTRY_CACHE_TTL: float = 30.0  # seconds
+_REGISTRY_CACHE_FAILURE_TTL: float = 300.0  # seconds — serve stale on error
+
 
 def _get_cached_registry(force: bool = False) -> list[dict]:
-    """Return cached registry, fetching fresh only if stale or forced."""
+    """Return cached registry, fetching fresh only if stale or forced.
+    On fetch failure, serves stale cache for up to _REGISTRY_CACHE_FAILURE_TTL."""
     global _REGISTRY_CACHE, _REGISTRY_CACHE_TIME
     now = time.time()
     if not force and _REGISTRY_CACHE is not None and (now - _REGISTRY_CACHE_TIME) < _REGISTRY_CACHE_TTL:
         return _REGISTRY_CACHE
-    fins = _fetch_dynamic_registry_no_cache()
+    try:
+        fins = _fetch_dynamic_registry_no_cache()
+    except Exception:
+        # Fetch failed — serve stale cache if available and within failure TTL
+        if _REGISTRY_CACHE is not None and (now - _REGISTRY_CACHE_TIME) < _REGISTRY_CACHE_FAILURE_TTL:
+            return _REGISTRY_CACHE
+        fins = []
     _REGISTRY_CACHE = fins
     _REGISTRY_CACHE_TIME = now
     return fins
@@ -632,16 +666,6 @@ def build_finetune_dict(
     return out
 
 
-def _clean_surrogates(val):
-    """Strip surrogate characters (U+D800-U+DFFF) from strings to prevent orjson crashes."""
-    if isinstance(val, str) and any(0xD800 <= ord(c) <= 0xDFFF for c in val):
-        return val.translate({i: None for i in range(0xD800, 0xE000)})
-    return val
-
-
-def _clean_tuple(t):
-    """Recursively strip surrogates from all strings in a nested tuple/list/dict."""
-    return tuple(_clean_surrogates(v) if isinstance(v, str) else v for v in t)
 
 
 def extract_finetune_fields(d: dict) -> tuple:
@@ -706,7 +730,7 @@ def extract_finetune_fields(d: dict) -> tuple:
     solver = d.get("sample_solver", "")
     if not solver:
         solver = m.get("sample_solver", "")
-    return _clean_tuple(
+    return _clean_utf8(
         (
             m.get("name", ""),
             m.get("architecture", ""),
@@ -1349,7 +1373,8 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
 def _check_upload_token() -> bool:
     """Check if we have a valid HF token for registry uploads.
     Returns True if either config has a real token or the HF hub cache has one."""
-    if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
+    from huggingface_hub import HfApi
+    if _REGISTRY_TOKEN_VALID:
         return True
     try:
         api = HfApi()
@@ -1363,8 +1388,9 @@ def _stamp_hf_username(json_data: dict) -> None:
     """Look up the authenticated HF user and stamp model.author in-place.
     Fails silently — upload proceeds without author if whoami() fails."""
     try:
+        from huggingface_hub import HfApi
         api = HfApi()
-        if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
+        if _REGISTRY_TOKEN_VALID:
             api = HfApi(token=REGISTRY_TOKEN)
         user = api.whoami()
         username = user.get("name", "")
@@ -1377,8 +1403,9 @@ def _stamp_hf_username(json_data: dict) -> None:
 def _hf_upload(fin_id, json_data):
     """Upload a finetune JSON to the HF Space.
     Tries direct commit first; falls back to PR for community submissions."""
+    from huggingface_hub import HfApi
     api = HfApi()
-    if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
+    if _REGISTRY_TOKEN_VALID:
         api = HfApi(token=REGISTRY_TOKEN)
     safe_id = _sanitize_fin_id(fin_id)
     blob = json.dumps(json_data, indent=2).encode()
@@ -1411,8 +1438,9 @@ def _fetch_dynamic_registry_no_cache() -> list[dict]:
     """Dynamically list all finetunes from the HF Space by scanning
     actual files. No index.json needed -- always in sync."""
     try:
+        from huggingface_hub import HfApi
         api = HfApi()
-        if REGISTRY_TOKEN and REGISTRY_TOKEN not in ("test_token_abc", "hf_YOUR_TOKEN_HERE"):
+        if _REGISTRY_TOKEN_VALID:
             api = HfApi(token=REGISTRY_TOKEN)
         files = api.list_repo_files(repo_id=REGISTRY_SPACE, repo_type="space")
         fin_files = [
@@ -1477,6 +1505,8 @@ def _clean_utf8(obj):
         return {_clean_utf8(k): _clean_utf8(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_clean_utf8(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_clean_utf8(v) for v in obj)
     return obj
 
 
@@ -1510,6 +1540,20 @@ def _write_finetune(fin_id, data):
 
 
 CARD_CSS = """
+/* Open plugin folder button — matches the warning block style */
+.fm-open-dir-btn { margin-top:0 !important }
+.fm-open-dir-btn button {
+  background:#374151 !important;
+  color:#d1d5db !important;
+  border:1px solid #4b5563 !important;
+  border-radius:6px !important;
+  font-size:13px !important;
+  padding:8px 16px !important;
+  cursor:pointer !important;
+}
+.fm-open-dir-btn button:hover {
+  background:#4b5563 !important;
+}
 .fm-cards-container { max-height:65vh; overflow-y:auto; padding-right:6px; scroll-behavior:smooth }
 .fm-card { border:1px solid var(--border-color-primary,#e5e7eb); border-radius:10px; padding:14px; margin-bottom:8px; cursor:pointer; transition:border-color .2s,box-shadow .2s,transform .15s; background:var(--body-background-fill,transparent) }
 .fm-card:hover { border-color:#6366f1; box-shadow:0 2px 8px rgba(99,102,241,.15); transform:translateY(-1px) }
@@ -1558,9 +1602,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             f"**Finetune Manager v{PLUGIN_VERSION}** — "
             f"[HF Registry](https://huggingface.co/spaces/{REGISTRY_SPACE})"
         )
+        if not _REGISTRY_TOKEN_VALID:
+            gr.HTML(_TOKEN_SETUP_GUIDE)
+            _open_dir_btn = gr.Button("📂 Open plugin folder", size="sm",
+                elem_classes="fm-open-dir-btn")
+            _open_dir_btn.click(fn=_open_config_dir, inputs=[], outputs=[])
 
         with gr.Tabs() as fm_tabs:
-            # ── BROWS┬ ──
+            # ── BROWSE ──
             with gr.TabItem("Browse", id="browse"):
                 with gr.Row():
                     b_search = gr.Textbox(label="Search", scale=3, container=False)
@@ -1800,11 +1849,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if hasattr(self, "load_settings_from_file") and settings_path.exists()
                         else (gr.update(), gr.update(), None)
                     )
-                    if not isinstance(target, str):
-                        if hasattr(self, "_model_choice_target_value"):
-                            target = self._model_choice_target_value(fid)
-                        else:
-                            target = gr.update()
+                    target = _ensure_model_choice_target(target, fid)
                     return f"Loaded '{m.get('name', fid)}' and switched", target, gr.update()
 
                 # ── Browse: Download (no switch) ──
@@ -1941,6 +1986,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         MODEL_INDEX.update(
                             {mid: name for mid, name in available_models}
                         )
+
+                        def _ensure_model_choice_target(target, fid):
+                            """Ensure model_choice_target is a unique string to force Gradio re-render."""
+                            if not isinstance(target, str):
+                                if hasattr(self, "_model_choice_target_value"):
+                                    return self._model_choice_target_value(fid)
+                                return gr.update()
+                            return target
 
                         # URL fields as labeled rows (matching LoRA tab pattern)
                         _URL_ENTRIES = [
@@ -2706,18 +2759,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     outputs=[fin_id],
                     queue=False,
                 )
-                fin_name.change(
-                    fn=_auto_id,
-                    inputs=[fin_name, fin_fsm, fin_auto_id, fin_id],
-                    outputs=[fin_id],
-                    queue=False,
-                )
-                fin_name.blur(
-                    fn=_auto_id,
-                    inputs=[fin_name, fin_fsm, fin_auto_id, fin_id],
-                    outputs=[fin_id],
-                    queue=False,
-                )
 
                 def _update_source_info(fsm, arch):
                     src = str(fsm or "").strip() or str(arch or "").strip()
@@ -2880,7 +2921,15 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if not id_:
                         return "Enter an ID"
                     if not _check_upload_token():
-                        return "No HF token available — run `huggingface-cli login` or set registry_token in config.json"
+                        return (
+                            "⚠️ **No HF token configured.** "
+                            "Upload requires a HuggingFace token.\n\n"
+                            "1. Go to https://huggingface.co/settings/tokens\n"
+                            "2. Create a token (any role)\n"
+                            f"3. Edit `{_cfg_path}` and add:\n"
+                            '   `{"registry_token": "hf_..."}`\n'
+                            "Or run `huggingface-cli login` in your terminal."
+                        )
                     data = _build(*vals, extra_data=extra_data)
                     bare_warnings = _check_bare_filenames(data)
                     if bare_warnings:
@@ -2911,9 +2960,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 def _load_src_enhancer(fsm):
                     if not fsm:
-                        return [gr.update()] * 6
-                    # Check MODEL_INDEX first for a fast cache hit
-                    if fsm in MODEL_INDEX:
                         return [gr.update()] * 6
                     raw = _read_model_json(fsm)
                     m = raw.get("model", {})
@@ -3018,17 +3064,24 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     + fin_lora_vals,
                 )
 
-                # Indices of URL/LoRA/path fields in ALL_INPUTS — now module-level URL_FIELD_IDX
+                # Indices of URL/LoRA/path fields in ALL_INPUTS — see URL_FIELD_IDX
 
                 def _editor_validate(*vals):
                     # Extract raw text from URL/LoRA/path fields before _build
                     raw_entries = []
+                    # URL fields (indices 5-12 in ALL_INPUTS)
                     for i in URL_FIELD_IDX:
                         if i < len(vals) and isinstance(vals[i], str):
                             for line in vals[i].split("\n"):
                                 line = line.strip()
                                 if line:
                                     raw_entries.append(line)
+                    # LoRA URLs from the hidden fin_loras accumulator (index 13)
+                    if len(vals) > 13 and isinstance(vals[13], str):
+                        for line in vals[13].split("\n"):
+                            line = line.strip()
+                            if line:
+                                raw_entries.append(line)
                     # Also check model ref from fsm field (index 4)
                     if len(vals) > 4 and isinstance(vals[4], str) and vals[4].strip():
                         raw_entries.insert(0, f"={vals[4].strip()}")
@@ -3105,7 +3158,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                     return _handler
 
-                def _textbox_to_dropdown(current, *refs):
+                def _textbox_to_dropdown(current):
                     """URL textbox changed: detect model ref and auto-select dropdown.
                     Does lightweight validation (model ref cache, local path, URL format).
                     HTTP availability is checked by the 'Validate All URLs' button."""
@@ -3188,7 +3241,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 for ref, tb, val_html in _URL_FIELDS:
                     tb.change(
                         fn=_textbox_to_dropdown,
-                        inputs=[tb, ref],
+                        inputs=[tb],
                         outputs=[ref, val_html],
                     )
                     ref.change(
@@ -3219,7 +3272,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     l_imp_btn = gr.Button("Import")
                 l_status = gr.Textbox(label="Status")
 
-            # ── UPLOAD ──
             # ── CIVITAI ──
             with gr.TabItem("CivitAI", id="civitai"):
                 gr.Markdown("Search CivitAI for models and auto-fill into Create/Edit.")
@@ -3345,17 +3397,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 )
 
             # ── SHARED LOCAL HANDLERS ──
-            def _loc_list():
-                p = Path(FINETUNES_DIR)
-                if not p.exists():
-                    return [], "*No finetunes directory*"
-                fs = sorted(p.glob("*.json"))
-                plural = "" if len(fs) == 1 else "s"
-                return (
-                    [(f.stem, f.stem) for f in fs],
-                    f"**{len(fs)} local finetune{plural}**",
-                )
-
             def _loc_detail(fid):
                 if not fid:
                     return {}
@@ -3427,16 +3468,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 # load_settings_from_file returns gr.update() for model_choice_target
                 # when the model type falls back to the current model (because the
                 # finetune ID isn't in base model types).  In that case the form
-                # never re-renders -- without refresh_form_trigger or a unique
-                # model_choice_target, fill_inputs is never called and the loaded
-                # settings (activated_loras etc.) stay invisible.
-                # Force a re-render by giving model_choice_target a unique value
-                # so the .change() chain fires and eventually runs fill_inputs.
-                if not isinstance(target, str):
-                    if hasattr(self, "_model_choice_target_value"):
-                        target = self._model_choice_target_value(fid)
-                    else:
-                        target = gr.update()
+                target = _ensure_model_choice_target(target, fid)
                 return f"Switched to '{fid}'", target, gr.update()
 
             l_load.click(
@@ -3551,11 +3583,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if hasattr(self, "load_settings_from_file") and settings_path.exists()
                     else (gr.update(), gr.update(), None)
                 )
-                if not isinstance(target, str):
-                    if hasattr(self, "_model_choice_target_value"):
-                        target = self._model_choice_target_value(fid)
-                    else:
-                        target = gr.update()
+                target = _ensure_model_choice_target(target, fid)
                 cards_html, _ = _fmt_local_cards()
                 return f"Imported '{fid}'{overwrite_note}", target, gr.update(), cards_html
 
@@ -3569,7 +3597,15 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 if not fid:
                     return "Select one"
                 if not _check_upload_token():
-                    return "No HF token available — run `huggingface-cli login` or set registry_token in config.json"
+                    return (
+                        "⚠️ **No HF token configured.** "
+                        "Upload requires a HuggingFace token.\n\n"
+                        "1. Go to https://huggingface.co/settings/tokens\n"
+                        "2. Create a token (any role)\n"
+                        f"3. Edit `{_cfg_path}` and add:\n"
+                        '   `{"registry_token": "hf_..."}`\n'
+                        "Or run `huggingface-cli login` in your terminal."
+                    )
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return "Not found"

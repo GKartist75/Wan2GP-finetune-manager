@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.6.2 🧪
+# Wan2GP Finetune Manager Plugin v3.6.3 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.6.2** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.6.3** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Features
 
@@ -83,11 +83,25 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
-├── plugin_info.json     # Plugin metadata v3.6.2
+├── plugin_info.json     # Plugin metadata v3.6.3
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
 └── .gitignore
 ```
+
+## What's New in v3.6.3
+
+- **In-token setup guide** — when no HF token is configured, a yellow warning banner appears at the top of the plugin with step-by-step instructions and a **📂 Open plugin folder** button that opens Explorer directly to the plugin folder
+- **Better error messages** — upload errors now show the exact file path and step-by-step token setup instructions instead of a terse "No HF token available"
+- **Path traversal fix** — `_write_settings_for_wan2gp` now sanitizes the finetune ID before writing to disk, preventing `../../` escape attacks
+- **Stale cache fallback** — registry fetch failures serve cached data for up to 5 minutes instead of returning empty results
+- **Dead code removal** — removed orphaned `_loras_from_json` (NameError if called), `_loc_list`, `_clean_surrogates`/`_clean_tuple`
+- **Improved setup experience** — `config.example.json` now includes inline instructions; `fix_registry_loras.py` uses script-relative paths instead of hardcoded absolute paths
+- **Various cleanups** — unused parameters removed, event handler deduplication, module-level imports made lazy where appropriate
+
+## What's New in v3.6.2
+
+- Version bumped to 3.6.2
 
 ## What's New in v3.6.1
 

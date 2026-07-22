@@ -3,18 +3,28 @@
 Promotes model.loras / model.loras_multipliers to top-level
 activated_loras / loras_multipliers so Wan2GP's load_settings_from_file
 picks them up correctly.
+
+Usage:
+  python scripts/fix_registry_loras.py
+
+The script looks for config.json in the plugin parent directory (../config.json).
 """
-import json, sys, os, tempfile
+import json
+import sys
 from pathlib import Path
+
+import requests
 from huggingface_hub import HfApi
 
 REGISTRY_URL = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 SPACE = "GKartist75/wan2gp-finetunes"
 
-# --- find config ---
+# --- find config (relative to this script's location) ---
+script_dir = Path(__file__).resolve().parent
 cfg_paths = [
-    Path("E:/DEVELOPMENT/WAN2GP/Finetune Manager/wan2gp-finetune-manager/config.json"),
-    Path("C:/Users/gjaku/Wan2GP/plugins/Wan2GP-finetune-manager/config.json"),
+    script_dir.parent / "config.json",          # wan2gp-finetune-manager/config.json
+    script_dir / ".." / "config.json",           # fallback
+    Path("config.json"),                         # cwd fallback
 ]
 token = None
 for p in cfg_paths:
@@ -38,7 +48,6 @@ fin_files = sorted([
 print(f"Found {len(fin_files)} finetune JSONs in {SPACE}\n")
 
 # --- process each file ---
-import requests
 updated = 0
 for path_in_repo in fin_files:
     fid = path_in_repo[len("finetunes/"):-len(".json")]

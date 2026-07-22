@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.6.3 (2026-07-22)
+
+### Added
+- **In-token setup guide** — when no HF token is configured, a yellow warning banner appears at the top of the plugin with step-by-step instructions. Includes a **📂 Open plugin folder** button that opens Windows Explorer directly to the plugin folder via `os.startfile()`.
+- **Stale cache fallback** — registry fetch failures now serve cached data for up to 5 minutes (`_REGISTRY_CACHE_FAILURE_TTL`) instead of returning empty results
+- **LoRA URL validation** — "Validate All URLs" now checks `fin_loras` (ALL_INPUTS[13]) in addition to the 8 URL fields
+
+### Fixed
+- **Path traversal in `_write_settings_for_wan2gp`** — finetune ID is now sanitized with `re.sub(r"[^A-Za-z0-9_.-]+", "_", ...)` before being used in file paths, preventing `../../` escape attacks
+- **Import ordering** — `_check_bare_filenames` and `_write_settings_for_wan2gp` were defined before the `re`, `json`, `Path`, and `html` imports they depend on. Moved below all imports.
+- **NameError in dead code** — `_loras_from_json` used `_os` without importing `os`. Deleted the function entirely (no callers).
+- **`_load_src_enhancer` silent skip** — removed short-circuit on MODEL_INDEX hit so the function always reads from disk and returns actual values (or empties) instead of silently keeping old values
+- **Token validation duplicated 4×** — extracted `_PLACEHOLDER_TOKENS` constant set and `_REGISTRY_TOKEN_VALID` boolean, replacing 4 inline `"test_token_abc"` string compares
+- **`_open_config_dir` function** — cross-platform folder-open helper (Windows `startfile`, macOS `open`, Linux `xdg-open`)
+
+### Changed
+- **Error messages** — upload token errors now show the exact `config.json` path and step-by-step instructions instead of a terse "No HF token available"
+- **`config.example.json`** — now includes a `_instructions` field explaining the setup process
+- **`_textbox_to_dropdown`** — removed unused `*refs` parameter; Gradio wiring changed to `inputs=[tb]` (was `inputs=[tb, ref]`)
+- **`fin_name` event handlers** — reduced from 3 per keystroke (`.change()` + `.input()` + `.blur()`) to 1 (`.input()` only)
+- **`fix_registry_loras.py`** — replaced hardcoded absolute paths with `Path(__file__).parent` relative paths; removed unused `os`/`tempfile` imports; deduplicated `import requests`
+- **Module-level `huggingface_hub` import** — replaced with lazy imports inside the 4 functions that use it, so the plugin loads even if the package is missing
+- **`_ensure_model_choice_target` helper** — extracted from 3 identical blocks in `_load`, `_loc_load`, `_loc_import`
+- **`_clean_surrogates`/`_clean_tuple` removed** — consolidated into `_clean_utf8` which now handles tuples
+
 ## v3.6.2 (2026-07-22)
 
 ### Changed
