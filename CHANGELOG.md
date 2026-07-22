@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.6.2 (2026-07-22)
+
+### Changed
+- Version bumped to 3.6.2
+
 ## v3.6.1 (2026-07-22)
 
 ### Fixed
