@@ -44,6 +44,24 @@ def _check_bare_filenames(data: dict) -> list[str]:
     return warnings
 
 
+def _validate_finetune_data(data) -> str | None:
+    """Validate a loaded finetune dict before applying it to Wan2GP.
+
+    Returns a human-readable error message if the data is unusable, or None
+    if it is safe to pass to _write_settings_for_wan2gp(). Centralised so the
+    registry-load, local-load and import paths all enforce the same contract
+    (a dict with a `model` sub-object) instead of crashing deep inside
+    _write_settings_for_wan2gp's `dict(data)`.
+    """
+    if not isinstance(data, dict):
+        return f"Finetune data is not a JSON object (got {type(data).__name__})"
+    if "model" not in data:
+        return "Finetune JSON is missing the required 'model' field"
+    if not isinstance(data["model"], dict):
+        return "'model' field is not a JSON object"
+    return None
+
+
 def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
     """Build a Wan2GP-compatible settings file from finetune data so
     load_settings_from_file() can parse it and trigger model switching.
@@ -80,7 +98,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.6.3"
+PLUGIN_VERSION = "3.6.4"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -1840,6 +1858,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = _fetch_registry_json(fid)
                     except Exception as e:
                         return f"Error: {e}", gr.update(), gr.update()
+                    err = _validate_finetune_data(data)
+                    if err:
+                        return f"Cannot load '{fid}': {err}", gr.update(), gr.update()
                     _write_finetune(fid, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
@@ -3426,8 +3447,26 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     fid = fpath.stem
                     try:
                         data = json.loads(fpath.read_text(encoding="utf-8"))
-                    except Exception:
-                        data = {}
+                    except Exception as e:
+                        # Surface a broken file as a red warning card instead of
+                        # a silently blank one, so the user knows it needs fixing.
+                        _h.append(
+                            f'<div class="fm-card fm-card--broken">'
+                            f'<div class="fm-card-name" style="color:#f87171">'
+                            f'⚠ {html.escape(fid)}</div>'
+                            f'<div class="fm-card-desc">Corrupt or invalid JSON: '
+                            f'{html.escape(str(e))}</div></div>'
+                        )
+                        continue
+                    err = _validate_finetune_data(data)
+                    if err:
+                        _h.append(
+                            f'<div class="fm-card fm-card--broken">'
+                            f'<div class="fm-card-name" style="color:#f87171">'
+                            f'⚠ {html.escape(fid)}</div>'
+                            f'<div class="fm-card-desc">{html.escape(err)}</div></div>'
+                        )
+                        continue
                     m = data.get("model", {})
                     _h.append(
                         _fmt_card_html_item(
@@ -3457,7 +3496,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return "Not found", gr.update(), gr.update()
-                data = json.loads(p.read_text(encoding="utf-8"))
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except Exception as e:
+                    return f"Invalid JSON in '{fid}': {e}", gr.update(), gr.update()
+                err = _validate_finetune_data(data)
+                if err:
+                    return f"Cannot load '{fid}': {err}", gr.update(), gr.update()
+                bare_warnings = _check_bare_filenames(data)
                 if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                     self.refresh_model_defs()
                 settings_path = _write_settings_for_wan2gp(fid, data)
@@ -3469,7 +3515,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 # when the model type falls back to the current model (because the
                 # finetune ID isn't in base model types).  In that case the form
                 target = _ensure_model_choice_target(target, fid)
-                return f"Switched to '{fid}'", target, gr.update()
+                msg = f"Switched to '{fid}'"
+                if bare_warnings:
+                    msg += "\n\n⚠️ " + "\n".join(bare_warnings)
+                return msg, target, gr.update()
 
             l_load.click(
                 fn=_loc_load,

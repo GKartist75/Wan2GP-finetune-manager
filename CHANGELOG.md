@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.6.4 (2026-08-13)
+
+### Fixed
+- **`_loc_load` crash on malformed finetune JSON** — loading a local finetune whose file is corrupt, empty, or missing the required `model` object used to throw deep inside `_write_settings_for_wan2gp` (`dict(data)` on a non-dict) and surface as a red Gradio error. `_loc_load` (and the registry `_load` path) now validate with the shared `_validate_finetune_data()` guard and return a clear "Cannot load 'X': …" message instead of crashing.
+- **Silently blank local cards for broken files** — `_fmt_local_cards` previously swallowed JSON/decode errors and rendered a blank card. Corrupt or schema-invalid local finetunes now render a red ⚠ warning card showing the exact reason, so the user can see and fix the bad file.
+- **Bare-filename warning now shown on load** — `_loc_load` now runs `_check_bare_filenames()` (previously only enforced on save & upload) and appends the warnings to the load status, so a finetune that will fail Wan2GP's downloader is flagged at load time rather than discovered later.
+
+### Added
+- **`_validate_finetune_data(data)`** — centralised contract check (must be a dict with a `model` sub-object) reused by the registry-load, local-load, and import paths, replacing inconsistent inline checks.
+
+### Changed
+- Bumped version to 3.6.4 (plugin.py + plugin_info.json).
+
 ## v3.6.3 (2026-07-22)
 
 ### Added
