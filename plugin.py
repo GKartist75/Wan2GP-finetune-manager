@@ -1281,10 +1281,11 @@ def _civitai_search(
 ) -> dict:
     """Search CivitAI models. Returns raw API response dict with 'items' key.
 
-    With a Type / Base Model filter, the API's text search applies the filters only
-    to the first page of text matches (so filtered searches mostly came back empty).
-    Filtered searches therefore page through the server-filtered list sorted by
-    downloads and match the query words against model names and tags locally."""
+    With a Type / Base Model filter, the API's Meilisearch `query` applies the
+    filters to each page of text matches only, so a filtered search mostly came
+    back empty. Filtered searches therefore merge three concurrent lookups: the
+    `query` search paged by cursor, the server-side `tag` filter, and a local
+    name/tag/creator match over the most downloaded models for those filters."""
     filters = []
     if model_type and model_type != "All":
         filters.append(("types", model_type))
@@ -1301,23 +1302,45 @@ def _civitai_search(
             return {"error": str(e), "items": []}
 
     words = query.lower().split()
-    params = filters + [("sort", "Most Downloaded"), ("limit", "100")]
-    items, cursor = [], None
-    for _ in range(3):
-        try:
+
+    def _matches(item):
+        tags = [t for t in (item.get("tags") or []) if isinstance(t, str)]
+        creator = (item.get("creator") or {}).get("username") or ""
+        haystack = " ".join([item.get("name") or "", creator, *tags]).lower()
+        return all(w in haystack for w in words)
+
+    def _paged(params, pages, keep=None):
+        found, cursor = [], None
+        for _ in range(pages):
             data = _fetch(params + ([("cursor", cursor)] if cursor else []))
-        except Exception as e:
-            if items:
+            found += [i for i in data.get("items", []) if keep is None or keep(i)]
+            cursor = (data.get("metadata") or {}).get("nextCursor")
+            if len(found) >= limit or not cursor:
                 break
-            return {"error": str(e), "items": []}
-        for item in data.get("items", []):
-            tags = [t for t in (item.get("tags") or []) if isinstance(t, str)]
-            haystack = " ".join([item.get("name") or "", *tags]).lower()
-            if all(w in haystack for w in words):
+        return found
+
+    lookups = [lambda: _paged(filters + [("sort", "Most Downloaded"), ("limit", "100")], 2, _matches)]
+    if query:
+        lookups.insert(0, lambda: _paged(filters + [("query", query), ("limit", "100")], 3))
+        lookups.insert(1, lambda: _paged(filters + [("tag", query.lower()), ("limit", "100")], 1))
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    items, seen, errors = [], set(), []
+    with ThreadPoolExecutor(max_workers=len(lookups)) as pool:
+        futures = [pool.submit(fn) for fn in lookups]
+    for future in futures:
+        try:
+            found = future.result()
+        except Exception as e:
+            errors.append(str(e))
+            continue
+        for item in found:
+            if item.get("id") not in seen:
+                seen.add(item.get("id"))
                 items.append(item)
-        cursor = (data.get("metadata") or {}).get("nextCursor")
-        if len(items) >= limit or not cursor:
-            break
+    if not items and errors:
+        return {"error": errors[0], "items": []}
     return {"items": items[:limit]}
 
 
