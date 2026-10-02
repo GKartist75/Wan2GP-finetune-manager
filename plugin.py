@@ -1223,6 +1223,44 @@ CIVITAI_BASE_MODEL_MAP = {
 }
 
 
+CIVITAI_FALLBACK_ENUMS = {
+    "ModelType": [
+        "Checkpoint", "LORA", "LoCon", "DoRA", "TextualInversion", "Hypernetwork",
+        "AestheticGradient", "Controlnet", "Upscaler", "MotionModule", "VAE",
+        "TextEncoder", "Poses", "Wildcards", "Other",
+    ],
+    "BaseModel": [
+        "Wan Video", "Wan Video 1.3B t2v", "Wan Video 14B t2v", "Wan Video 14B i2v 480p",
+        "Wan Video 14B i2v 720p", "Wan Video 2.2 TI2V-5B", "Wan Video 2.2 I2V-A14B",
+        "Wan Video 2.2 T2V-A14B", "LTXV", "LTXV2", "LTXV 2.3", "LTXV 2.5", "MiniMax H3",
+        "Hunyuan Video", "Mochi", "CogVideoX", "Flux.1 S", "Flux.1 D", "Flux.1 Krea",
+        "Flux.1 Kontext", "Flux.2 D", "Flux.2 Klein 9B", "Flux.2 Klein 9B-base",
+        "Flux.2 Klein 4B", "Flux.2 Klein 4B-base", "Chroma", "Qwen", "Qwen 2.1",
+        "ZImageTurbo", "ZImageBase", "Krea 2", "HiDream", "HiDream-O1", "Ideogram 4.0",
+        "Ming Image Design 0.1", "ACE Audio", "MiniMax Music 3", "YuE2", "Illustrious",
+        "NoobAI", "Pony", "Pony V7", "SDXL 1.0", "SDXL Lightning", "SDXL Turbo",
+        "SD 1.5", "SD 2.1", "SD 3", "SD 3.5", "Other",
+    ],
+}
+_civitai_enums_cache: dict = {}
+
+
+def _civitai_enum(key: str) -> list:
+    """Live CivitAI enum values (base models, model types); falls back to a built-in
+    list when offline so the filters still cover WanGP architectures."""
+    if key not in _civitai_enums_cache:
+        values = []
+        try:
+            req = urllib.request.Request(f"{CIVITAI_API}/enums")
+            req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
+            data = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
+            values = [v for v in data.get(key, []) if isinstance(v, str) and v]
+        except Exception:
+            pass
+        _civitai_enums_cache[key] = values or CIVITAI_FALLBACK_ENUMS.get(key, [])
+    return ["All"] + _civitai_enums_cache[key]
+
+
 def _civitai_search(
     query: str, model_type: str = "", base_model: str = "", limit: int = 12
 ) -> dict:
@@ -3305,37 +3343,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     )
                     ci_type = gr.Dropdown(
                         label="Type",
-                        choices=[
-                            "All",
-                            "LORA",
-                            "Checkpoint",
-                            "TextualInversion",
-                            "Hypernetwork",
-                            "AestheticGradient",
-                            "ControlNet",
-                            "Poses",
-                            "Wildcards",
-                            "MotionModule",
-                            "VAE",
-                        ],
+                        choices=_civitai_enum("ModelType"),
                         value="All",
                         scale=1,
                     )
                     ci_base = gr.Dropdown(
                         label="Base Model",
-                        choices=[
-                            "All",
-                            "SDXL 1.0",
-                            "SDXL 0.9",
-                            "SD 1.5",
-                            "SD 2.0",
-                            "SD 2.1",
-                            "Pony",
-                            "Flux.1 D",
-                            "Flux.1 S",
-                            "SD 3",
-                            "SD 3.5",
-                        ],
+                        choices=_civitai_enum("BaseModel"),
+                        filterable=True,
                         value="All",
                         scale=1,
                     )
