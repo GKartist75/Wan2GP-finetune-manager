@@ -1264,20 +1264,49 @@ def _civitai_enum(key: str) -> list:
 def _civitai_search(
     query: str, model_type: str = "", base_model: str = "", limit: int = 12
 ) -> dict:
-    """Search CivitAI models. Returns raw API response dict with 'items' key."""
-    params = [("query", query), ("limit", str(limit))]
+    """Search CivitAI models. Returns raw API response dict with 'items' key.
+
+    With a Type / Base Model filter, the API's text search applies the filters only
+    to the first page of text matches (so filtered searches mostly came back empty).
+    Filtered searches therefore page through the server-filtered list sorted by
+    downloads and match the query words against model names and tags locally."""
+    filters = []
     if model_type and model_type != "All":
-        params.append(("types", model_type))
+        filters.append(("types", model_type))
     if base_model and base_model != "All":
-        params.append(("baseModels", base_model))
-    url = f"{CIVITAI_API}/models?" + urllib.parse.urlencode(params)
-    try:
+        filters.append(("baseModels", base_model))
+
+    def _fetch(params):
+        url = f"{CIVITAI_API}/models?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
-        resp = urllib.request.urlopen(req, timeout=20)
-        return json.loads(resp.read().decode())
-    except Exception as e:
-        return {"error": str(e), "items": []}
+        return json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
+
+    if not filters:
+        try:
+            return _fetch([("query", query), ("limit", str(limit))])
+        except Exception as e:
+            return {"error": str(e), "items": []}
+
+    words = query.lower().split()
+    params = filters + [("sort", "Most Downloaded"), ("limit", "100")]
+    items, cursor = [], None
+    for _ in range(3):
+        try:
+            data = _fetch(params + ([("cursor", cursor)] if cursor else []))
+        except Exception as e:
+            if items:
+                break
+            return {"error": str(e), "items": []}
+        for item in data.get("items", []):
+            tags = [t for t in (item.get("tags") or []) if isinstance(t, str)]
+            haystack = " ".join([item.get("name") or "", *tags]).lower()
+            if all(w in haystack for w in words):
+                items.append(item)
+        cursor = (data.get("metadata") or {}).get("nextCursor")
+        if len(items) >= limit or not cursor:
+            break
+    return {"items": items[:limit]}
 
 
 def _civitai_render_results(data: dict) -> str:
@@ -3370,21 +3399,24 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 )
 
                 def _ci_do_search(query, mtype, base):
-                    if not query or not query.strip():
+                    query = (query or "").strip()
+                    filtered = mtype not in ("", "All", None) or base not in ("", "All", None)
+                    if not query and not filtered:
                         return (
                             "<div style='color:#9ca3af;"
                             "text-align:center;padding:32px'>"
-                            "Enter a search term</div>",
+                            "Enter a search term or pick a Type / Base Model</div>",
                             "",
                         )
-                    data = _civitai_search(
-                        query.strip(), model_type=mtype, base_model=base
-                    )
+                    data = _civitai_search(query, model_type=mtype, base_model=base)
                     html_out = _civitai_render_results(data)
                     count = len(data.get("items", [])) if "error" not in data else 0
+                    label = f"'{html.escape(query)}'" if query else "most downloaded"
                     status = (
-                        f"**{count} results** for '{html.escape(query.strip())}'"
+                        f"**{count} results** for {label}"
                         if count
+                        else f"No results found: {html.escape(data['error'])}"
+                        if "error" in data
                         else "No results found"
                     )
                     return html_out, status
