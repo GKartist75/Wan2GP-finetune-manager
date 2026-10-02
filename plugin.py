@@ -1245,15 +1245,30 @@ CIVITAI_FALLBACK_ENUMS = {
 _civitai_enums_cache: dict = {}
 
 
+def _civitai_get_json(url: str, timeout: int = 20, attempts: int = 3):
+    """GET a CivitAI API URL as JSON, retrying transient network failures
+    (dropped TLS handshakes, resets, timeouts) that otherwise abort a search."""
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
+            return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == attempts - 1:
+                raise
+        except (urllib.error.URLError, OSError):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(0.7 * (attempt + 1))
+
+
 def _civitai_enum(key: str) -> list:
     """Live CivitAI enum values (base models, model types); falls back to a built-in
     list when offline so the filters still cover WanGP architectures."""
     if key not in _civitai_enums_cache:
         values = []
         try:
-            req = urllib.request.Request(f"{CIVITAI_API}/enums")
-            req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
-            data = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
+            data = _civitai_get_json(f"{CIVITAI_API}/enums", timeout=5, attempts=2)
             values = [v for v in data.get(key, []) if isinstance(v, str) and v]
         except Exception:
             pass
@@ -1277,10 +1292,7 @@ def _civitai_search(
         filters.append(("baseModels", base_model))
 
     def _fetch(params):
-        url = f"{CIVITAI_API}/models?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
-        return json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
+        return _civitai_get_json(f"{CIVITAI_API}/models?" + urllib.parse.urlencode(params))
 
     if not filters:
         try:
