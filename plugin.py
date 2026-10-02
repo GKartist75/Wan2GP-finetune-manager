@@ -108,11 +108,12 @@ _cfg_path = Path(__file__).parent / "config.json"
 _cfg_dir = _cfg_path.parent
 
 REGISTRY_TOKEN = ""
+CIVITAI_NSFW_DEFAULT = False
 if _cfg_path.exists():
     try:
-        REGISTRY_TOKEN = json.loads(_cfg_path.read_text(encoding="utf-8")).get(
-            "registry_token", ""
-        )
+        _cfg = json.loads(_cfg_path.read_text(encoding="utf-8"))
+        REGISTRY_TOKEN = _cfg.get("registry_token", "")
+        CIVITAI_NSFW_DEFAULT = bool(_cfg.get("civitai_nsfw", False))
     except Exception:
         pass
 _PLACEHOLDER_TOKENS = {"test_token_abc", "hf_YOUR_TOKEN_HERE"}
@@ -1277,7 +1278,7 @@ def _civitai_enum(key: str) -> list:
 
 
 def _civitai_search(
-    query: str, model_type: str = "", base_model: str = "", limit: int = 12
+    query: str, model_type: str = "", base_model: str = "", limit: int = 12, nsfw: bool = False
 ) -> dict:
     """Search CivitAI models. Returns raw API response dict with 'items' key.
 
@@ -1286,7 +1287,7 @@ def _civitai_search(
     back empty. Filtered searches therefore merge three concurrent lookups: the
     `query` search paged by cursor, the server-side `tag` filter, and a local
     name/tag/creator match over the most downloaded models for those filters."""
-    filters = []
+    filters = [("nsfw", "true")] if nsfw else []
     if model_type and model_type != "All":
         filters.append(("types", model_type))
     if base_model and base_model != "All":
@@ -1295,9 +1296,9 @@ def _civitai_search(
     def _fetch(params):
         return _civitai_get_json(f"{CIVITAI_API}/models?" + urllib.parse.urlencode(params))
 
-    if not filters:
+    if not any(key in ("types", "baseModels") for key, _ in filters):
         try:
-            return _fetch([("query", query), ("limit", str(limit))])
+            return _fetch(filters + [("query", query), ("limit", str(limit))])
         except Exception as e:
             return {"error": str(e), "items": []}
 
@@ -3418,6 +3419,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         value="All",
                         scale=1,
                     )
+                    ci_nsfw = gr.Checkbox(
+                        label="Include NSFW",
+                        value=CIVITAI_NSFW_DEFAULT,
+                        scale=0,
+                        min_width=120,
+                    )
                     ci_search_btn = gr.Button("Search", variant="primary", scale=1)
                 with gr.Row():
                     ci_load_btn = gr.Button(
@@ -3433,7 +3440,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     visible=False, elem_id="civitai-selected", value="{}"
                 )
 
-                def _ci_do_search(query, mtype, base):
+                def _ci_do_search(query, mtype, base, nsfw=False):
                     query = (query or "").strip()
                     filtered = mtype not in ("", "All", None) or base not in ("", "All", None)
                     if not query and not filtered:
@@ -3443,7 +3450,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "Enter a search term or pick a Type / Base Model</div>",
                             "",
                         )
-                    data = _civitai_search(query, model_type=mtype, base_model=base)
+                    data = _civitai_search(query, model_type=mtype, base_model=base, nsfw=bool(nsfw))
                     html_out = _civitai_render_results(data)
                     count = len(data.get("items", [])) if "error" not in data else 0
                     label = f"'{html.escape(query)}'" if query else "most downloaded"
@@ -3458,12 +3465,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 ci_search_btn.click(
                     fn=_ci_do_search,
-                    inputs=[ci_search, ci_type, ci_base],
+                    inputs=[ci_search, ci_type, ci_base, ci_nsfw],
                     outputs=[ci_results, ci_status],
                 )
                 ci_search.submit(
                     fn=_ci_do_search,
-                    inputs=[ci_search, ci_type, ci_base],
+                    inputs=[ci_search, ci_type, ci_base, ci_nsfw],
                     outputs=[ci_results, ci_status],
                 )
 
