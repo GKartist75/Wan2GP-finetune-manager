@@ -2,5 +2,9 @@
   "_instructions": "Copy this file to config.json, then replace the token below with your own. Get one at https://huggingface.co/settings/tokens",
   "registry_token": "hf_YOUR_TOKEN_HERE",
   "_civitai_nsfw": "Optional: true = include mature models in CivitAI search by default. Omit or false = the plugin behaves as before (SFW only).",
-  "civitai_nsfw": false
+  "civitai_nsfw": false,
+  "_civitai_site": "Optional: which CivitAI host the CivitAI tab starts on: 'civitai.com' (standard) or 'civitai.red' (adult front-end). Same catalogue either way; the host decides which download links get filled in.",
+  "civitai_site": "civitai.com",
+  "_civitai_api_key": "Optional: your CivitAI API key (civitai.com -> Account settings -> API Keys). Sent as Authorization: Bearer for searches and appended as ?token= to download URLs, which is what makes mature/auth-gated files downloadable and raises rate limits.",
+  "civitai_api_key": ""
 }

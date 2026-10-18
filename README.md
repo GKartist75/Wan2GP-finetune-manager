@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.6.3 🧪
+# Wan2GP Finetune Manager Plugin v3.6.6 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.6.3** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.6.6** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Features
 
@@ -15,7 +15,7 @@ Community finetune registry plugin for Wan2GP. Browse, load, create, improve, an
 | **Browse** | Refresh registry, search by name/description/author/ID, filter by architecture or tag, click cards for JSON details, validate URLs, download locally, improve/create variant |
 | **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
 | **Local** | Visual card browser, load & switch, delete, export, import .json with preview, upload to registry |
-| **CivitAI** | Search CivitAI by query/type/base model, browse results with version details, one-click URL fill (routes to LoRA or main checkpoint automatically) |
+| **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, one-click URL fill (routes to LoRA or main checkpoint automatically) |
 
 ## Install
 
@@ -59,7 +59,7 @@ A token is only needed to **upload** finetunes — browsing, searching, and down
 > ⚠️ `config.json` is gitignored — your token stays local and will never be committed.
 > 💡 No token? Skip steps 1-3. You can still use Browse, Create/Edit, Local, and CivitAI tabs. Upload will show a clear error asking you to set up your token.
 
-#### Optional: CivitAI mature content
+#### Optional: CivitAI mature content and the adult site
 
 CivitAI hides mature models unless they are asked for. Tick **Include NSFW** in the CivitAI tab, or make it the default in `config.json`:
 
@@ -67,7 +67,23 @@ CivitAI hides mature models unless they are asked for. Tick **Include NSFW** in 
 {"registry_token": "hf_YOUR_TOKEN_HERE", "civitai_nsfw": true}
 ```
 
-`civitai_nsfw` defaults to `false` when the key is absent, so an existing `config.json` keeps the previous behaviour. See [`config.example.json`](./config.example.json).
+`civitai_nsfw` defaults to `false` when the key is absent, so an existing `config.json` keeps the previous behaviour.
+
+The **Site** dropdown in the CivitAI tab chooses between `civitai.com` (standard) and `civitai.red` (its adult front-end). Both serve the same catalogue — same models, same ids, and *Include NSFW* is what actually includes mature models on either one — but the site decides which host the download links filled into Create/Edit belong to, and `civitai.red` is the front-end that still works where the standard site gates mature content. The default can be set in `config.json`:
+
+```json
+{"civitai_site": "civitai.red"}
+```
+
+Mature files are behind a login on both hosts, so an anonymous download of one fails no matter which site you pick. To make those downloads work — and to raise the anonymous rate limit — add your CivitAI API key ([civitai.com](https://civitai.com) → Account settings → API Keys):
+
+```json
+{"civitai_api_key": "your_civitai_api_key"}
+```
+
+The key is sent as an `Authorization: Bearer` header for searches, and appended as `?token=…` to the download URLs the plugin fills in (Wan2GP's downloader fetches the URL itself and cannot send headers, which is why the query form — the one CivitAI documents for download tools — is used there). The key is never attached to any non-CivitAI host.
+
+See [`config.example.json`](./config.example.json).
 
 ### How It Works
 
@@ -93,11 +109,24 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
-├── plugin_info.json     # Plugin metadata v3.6.3
+├── plugin_info.json     # Plugin metadata v3.6.6
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
 └── .gitignore
 ```
+
+## What's New in v3.6.6
+
+- **`civitai.red` support** — CivitAI's adult front-end is now a **Site** dropdown in the CivitAI tab (`civitai.com` / `civitai.red`). Both hosts serve the same catalogue — same models, same ids — so the choice decides which host the download links filled into Create/Edit belong to, and covers regions where the standard site gates mature content. Set the default with `"civitai_site"` in `config.json`.
+- **Optional CivitAI API key** — `"civitai_api_key"` in `config.json` is sent as `Authorization: Bearer` for searches and appended as `?token=…` to the download URLs the plugin fills in, which is what makes mature (login-gated) files downloadable. It is never attached to a non-CivitAI host.
+
+## What's New in v3.6.5
+
+- **CivitAI filters that actually work** — Type and Base Model now read CivitAI's live `/api/v1/enums`, so Wan Video 2.1/2.2, LTXV 2.3/2.5, MiniMax H3, Hunyuan Video, Qwen, Z-Image, Krea 2 and Flux.2 are selectable (with a built-in fallback list when offline); filtered searches merge three concurrent lookups instead of coming back empty; requests retry dropped connections, 5xx and 429; and **Include NSFW** reveals mature models (`"civitai_nsfw": true` makes it the default). Contributed by HateTM — [PR #1](https://github.com/GKartist75/Wan2GP-finetune-manager/pull/1).
+
+## What's New in v3.6.4
+
+- **Malformed finetune files no longer crash the plugin** — loading a corrupt, empty or schema-invalid local/registry finetune now shows a clear "Cannot load 'X': …" message and a red ⚠ card in the Local tab, instead of a deep traceback.
 
 ## What's New in v3.6.3
 
@@ -134,6 +163,10 @@ wan2gp-finetune-manager/
 - **Dark mode** — card HTML uses CSS custom properties instead of hardcoded colors, adapting to Wan2GP's theme
 - **Round-trip stability** — key ordering preserved when editing and re-uploading finetunes
 - **Code deduplication** — shared URL/LoRA key lists and card HTML builder extracted to module-level, removing ~150 lines of duplicated code
+
+## Credits
+
+- **[HateTM](https://github.com/HateTM)** — the CivitAI filter work in [PR #1](https://github.com/GKartist75/Wan2GP-finetune-manager/pull/1): live Type/Base Model enums, the merged filtered search, request retries, and the Include NSFW option. The v3.6.6 `civitai.red` site selector and API-key support are built on top of it.
 
 ## 🔗 Links
 

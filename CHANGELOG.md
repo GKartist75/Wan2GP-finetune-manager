@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.6.6 (2026-10-18)
+
+### Added
+- **Site selector in the CivitAI tab** — CivitAI now runs a standard site (`civitai.com`) and an adult front-end (`civitai.red`). Both serve the same catalogue: identical model ids, identical NSFW filtering and an identical `/api/v1/enums` payload were measured on both hosts. The only thing the host changes is which host the API's download URLs point at, so the new **Site** dropdown decides that: search on `civitai.red` and the links filled into Create/Edit belong to `civitai.red`. It also covers regions where the standard site gates mature content. Default is configurable with `"civitai_site": "civitai.com"` (or `"civitai.red"`). *Include NSFW* is still what includes mature models, on either host.
+- **Optional CivitAI API key** (`"civitai_api_key"` in `config.json`) — mature model files are behind a login on both hosts, so an anonymous download fails regardless of site. When a key is set, searches send `Authorization: Bearer <key>`, and the download URLs the plugin fills in get `?token=<key>` appended (the form CivitAI documents for download tools, which is what Wan2GP's own downloader needs). The key is only ever attached to CivitAI hosts. It also raises the anonymous rate limit.
+
+### Changed
+- Bumped version to 3.6.6 (plugin.py + plugin_info.json).
+- The civitai.com download fallback is now derived from the selected site rather than hardcoded, and two unused locals in the result renderer (`mid`, `dl_url`) were dropped.
+- README: version sections for 3.6.4/3.6.5/3.6.6 and a Credits section.
+
+CivitAI search filtering in v3.6.5 was contributed by HateTM ([PR #1](https://github.com/GKartist75/Wan2GP-finetune-manager/pull/1)); the `civitai.red` host and API key support here build on that work.
+
 ## v3.6.5 (2026-10-18)
 
 ### Fixed

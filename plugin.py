@@ -99,7 +99,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.6.5"
+PLUGIN_VERSION = "3.6.6"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -110,11 +110,15 @@ _cfg_dir = _cfg_path.parent
 
 REGISTRY_TOKEN = ""
 CIVITAI_NSFW_DEFAULT = False
+CIVITAI_API_KEY = ""
+CIVITAI_SITE_DEFAULT = "civitai.com"
 if _cfg_path.exists():
     try:
         _cfg = json.loads(_cfg_path.read_text(encoding="utf-8"))
         REGISTRY_TOKEN = _cfg.get("registry_token", "")
         CIVITAI_NSFW_DEFAULT = bool(_cfg.get("civitai_nsfw", False))
+        CIVITAI_API_KEY = str(_cfg.get("civitai_api_key", "") or "")
+        CIVITAI_SITE_DEFAULT = str(_cfg.get("civitai_site", "civitai.com") or "civitai.com")
     except Exception:
         pass
 _PLACEHOLDER_TOKENS = {"test_token_abc", "hf_YOUR_TOKEN_HERE"}
@@ -1207,6 +1211,55 @@ def _download_finetune_files(data: dict) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 CIVITAI_API = "https://civitai.com/api/v1"
+# civitai.red is the adult front-end of the same service: same catalogue, same ids,
+# same /enums, same nsfw=true behaviour, but it hands out download URLs on its own
+# host. Mature files are gated behind a login on both hosts, which is what the
+# optional civitai_api_key in config.json is for.
+CIVITAI_SITES = ("civitai.com", "civitai.red")
+
+
+def _civitai_site(value: str) -> str:
+    """Normalise a site choice; anything unknown falls back to civitai.com."""
+    site = (value or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        if site.startswith(prefix):
+            site = site[len(prefix):]
+    site = site.strip("/")
+    return site if site in CIVITAI_SITES else CIVITAI_SITES[0]
+
+
+def _civitai_base(site: str) -> str:
+    """API base URL for the chosen site."""
+    return f"https://{_civitai_site(site)}/api/v1"
+
+
+def _civitai_download_url(site: str, version_id) -> str:
+    """Fallback download URL when the API response carries none."""
+    return f"https://{_civitai_site(site)}/api/download/models/{version_id}"
+
+
+def _civitai_api_headers() -> dict:
+    """Request headers for CivitAI API calls; adds the API key when configured."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; FinetuneManager/3.0)"}
+    if CIVITAI_API_KEY:
+        headers["Authorization"] = f"Bearer {CIVITAI_API_KEY}"
+    return headers
+
+
+def _civitai_with_token(url: str) -> str:
+    """Attach the configured CivitAI API key to a download URL. Wan2GP fetches the
+    URL itself and cannot send an Authorization header, so the query-parameter form
+    (documented by CivitAI for download tools) is the only option here. The key is
+    only ever attached to CivitAI hosts."""
+    if not CIVITAI_API_KEY or not url:
+        return url
+    if urllib.parse.urlsplit(url).hostname not in CIVITAI_SITES:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}token={urllib.parse.quote(CIVITAI_API_KEY, safe='')}"
+
+
+CIVITAI_SITE_DEFAULT = _civitai_site(CIVITAI_SITE_DEFAULT)
 
 
 CIVITAI_FALLBACK_ENUMS = {
@@ -1255,8 +1308,7 @@ def _civitai_get_json(url: str, timeout: int = 20, attempts: int = 3):
     for attempt in range(attempts):
         last = attempt == attempts - 1
         try:
-            req = urllib.request.Request(url)
-            req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
+            req = urllib.request.Request(url, headers=_civitai_api_headers())
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
@@ -1294,7 +1346,8 @@ def _civitai_enum_updates(*current: str) -> list:
 
 def _civitai_load_enums() -> bool:
     """Fetch /enums once and cache it (one request fills every key).
-    Returns True when live values were cached; never raises."""
+    Returns True when live values were cached; never raises.
+    Both hosts serve an identical enum payload, so this always uses the standard one."""
     try:
         data = _civitai_get_json(f"{CIVITAI_API}/enums", timeout=5, attempts=2)
     except Exception:
@@ -1331,7 +1384,12 @@ def _civitai_prefetch_enums() -> None:
 
 
 def _civitai_search(
-    query: str, model_type: str = "", base_model: str = "", limit: int = 12, nsfw: bool = False
+    query: str,
+    model_type: str = "",
+    base_model: str = "",
+    limit: int = 12,
+    nsfw: bool = False,
+    site: str = "civitai.com",
 ) -> dict:
     """Search CivitAI models. Returns raw API response dict with 'items' key.
 
@@ -1339,7 +1397,10 @@ def _civitai_search(
     filters to each page of text matches only, so a filtered search mostly came
     back empty. Filtered searches therefore merge three concurrent lookups: the
     `query` search paged by cursor, the server-side `tag` filter, and a local
-    name/tag/creator match over the most downloaded models for those filters."""
+    name/tag/creator match over the most downloaded models for those filters.
+
+    `site` picks the host to query (civitai.com or civitai.red). Both serve the
+    same catalogue; the difference is which host the returned download URLs use."""
     filters = [("nsfw", "true")] if nsfw else []
     if model_type and model_type != "All":
         filters.append(("types", model_type))
@@ -1347,7 +1408,9 @@ def _civitai_search(
         filters.append(("baseModels", base_model))
 
     def _fetch(params):
-        return _civitai_get_json(f"{CIVITAI_API}/models?" + urllib.parse.urlencode(params))
+        return _civitai_get_json(
+            f"{_civitai_base(site)}/models?" + urllib.parse.urlencode(params)
+        )
 
     if not any(key in ("types", "baseModels") for key, _ in filters):
         try:
@@ -1398,8 +1461,9 @@ def _civitai_search(
     return {"items": items[:limit]}
 
 
-def _civitai_render_results(data: dict) -> str:
-    """Render CivitAI search results as HTML cards."""
+def _civitai_render_results(data: dict, site: str = "civitai.com") -> str:
+    """Render CivitAI search results as HTML cards for the chosen site, so the
+    download URLs the cards hand to Create/Edit belong to that host."""
     items = data.get("items", []) if "error" not in data else []
     error = data.get("error", "")
     if error:
@@ -1413,7 +1477,6 @@ def _civitai_render_results(data: dict) -> str:
 
     parts = ['<div style="max-height:65vh;overflow-y:auto">']
     for model in items:
-        mid = model.get("id", 0)
         name = html.escape(model.get("name", "?") or "?")
         mtype = html.escape(model.get("type", "?") or "?")
         desc = html.escape((model.get("description", "") or "")[:200])
@@ -1439,7 +1502,6 @@ def _civitai_render_results(data: dict) -> str:
                 '<div style="margin-top:6px;padding-top:4px;border-top:1px solid var(--border-color-primary,#f3f4f6)">'
             )
             for v in versions:
-                vid = v.get("id", 0)
                 vname = html.escape(v.get("name", "?") or "?")
                 base = html.escape(v.get("baseModel", "") or "")
                 files = v.get("files", [])
@@ -1449,11 +1511,6 @@ def _civitai_render_results(data: dict) -> str:
                 )
                 fname = html.escape(primary.get("name", "") if primary else "")
                 fsize = primary.get("sizeKB", 0) if primary else 0
-                dl_url = html.escape(
-                    v.get(
-                        "downloadUrl", f"https://civitai.com/api/download/models/{vid}"
-                    )
-                )
                 size_str = f"{fsize / 1024:.1f}MB" if fsize else "?"
                 _civ_model_json = json.dumps(model, default=str).replace("'", "&#39;")
                 _civ_ver_json = json.dumps(v, default=str).replace("'", "&#39;")
@@ -1482,13 +1539,14 @@ var btn=e.target.closest('.civitai-use-btn');
 if(!btn)return;e.preventDefault();
 var version=JSON.parse(btn.getAttribute('data-civitai-version')||'{}');
 var model=JSON.parse(btn.getAttribute('data-civitai-model')||'{}');
-var data=JSON.stringify({model:model,version:version});
+var site="__CIVITAI_SITE__";
+var data=JSON.stringify({model:model,version:version,site:site});
 var r=(window.gradioApp?window.gradioApp():document.querySelector('gradio-app'))||document;r=r.shadowRoot||r;
 var ta=r.querySelector('#civitai-selected textarea');
 if(ta){ta.value=data;ta.dispatchEvent(new Event('input',{bubbles:true}));}
 });
 })();
-</script>""")
+</script>""".replace("__CIVITAI_SITE__", _civitai_site(site)))
     return "".join(parts)
 
 
@@ -1509,6 +1567,7 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
 
     model = sel.get("model", {})
     version = sel.get("version", {})
+    site = _civitai_site(sel.get("site") or CIVITAI_SITE_DEFAULT)
     model_name = model.get("name", "?") or "?"
 
     files = version.get("files", [])
@@ -1521,7 +1580,9 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
         else version.get("downloadUrl", "")
     )
     if not dl_url:
-        dl_url = f"https://civitai.com/api/download/models/{version.get('id', '')}"
+        dl_url = _civitai_download_url(site, version.get("id", ""))
+    dl_url = _civitai_with_token(dl_url)
+    keyed = " (API key attached)" if CIVITAI_API_KEY and "token=" in dl_url else ""
 
     mtype = model.get("type", "").upper()
     # Put URL in main checkpoints for non-LoRA, loras field for LoRA
@@ -1529,12 +1590,12 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
         # URL goes to loras field (index 12 in return tuple = ALL_INPUTS[13])
         result = [gr.update()] * 33
         result[12] = gr.update(value=dl_url)
-        status = f"LoRA URL from {model_name}"
+        status = f"LoRA URL from {model_name}{keyed}"
     else:
         # URL goes to main checkpoints field (index 4 in return tuple = ALL_INPUTS[5])
         result = [gr.update()] * 33
         result[4] = gr.update(value=dl_url)
-        status = f"Download URL from {model_name}"
+        status = f"Download URL from {model_name}{keyed}"
 
     return tuple(result + [status])
 
@@ -3451,7 +3512,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
             # ── CIVITAI ──
             with gr.TabItem("CivitAI", id="civitai") as ci_tab:
-                gr.Markdown("Search CivitAI for models and auto-fill into Create/Edit.")
+                gr.Markdown(
+                    "Search CivitAI for models and auto-fill into Create/Edit. "
+                    "**Site** picks the host: `civitai.com` or its adult front-end "
+                    "`civitai.red` (same catalogue; mature models need *Include NSFW* "
+                    "on either one)."
+                )
                 with gr.Row():
                     ci_search = gr.Textbox(
                         label="Search",
@@ -3471,6 +3537,13 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         filterable=True,
                         value="All",
                         scale=1,
+                    )
+                    ci_site = gr.Dropdown(
+                        label="Site",
+                        choices=list(CIVITAI_SITES),
+                        value=CIVITAI_SITE_DEFAULT,
+                        scale=1,
+                        min_width=120,
                     )
                     ci_nsfw = gr.Checkbox(
                         label="Include NSFW",
@@ -3506,8 +3579,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     outputs=[ci_type, ci_base],
                 )
 
-                def _ci_do_search(query, mtype, base, nsfw=False):
+                def _ci_do_search(query, mtype, base, nsfw=False, site="civitai.com"):
                     query = (query or "").strip()
+                    site = _civitai_site(site)
                     filtered = mtype not in ("", "All", None) or base not in ("", "All", None)
                     _civitai_prefetch_enums()
                     enum_updates = _civitai_enum_updates(mtype, base)
@@ -3518,8 +3592,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "Enter a search term or pick a Type / Base Model</div>",
                             "",
                         ) + tuple(enum_updates)
-                    data = _civitai_search(query, model_type=mtype, base_model=base, nsfw=bool(nsfw))
-                    html_out = _civitai_render_results(data)
+                    data = _civitai_search(
+                        query, model_type=mtype, base_model=base, nsfw=bool(nsfw), site=site
+                    )
+                    html_out = _civitai_render_results(data, site)
                     count = len(data.get("items", [])) if "error" not in data else 0
                     label = f"'{html.escape(query)}'" if query else "most downloaded"
                     status = (
@@ -3529,16 +3605,18 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if "error" in data
                         else "No results found"
                     )
+                    if count and (site != "civitai.com" or nsfw):
+                        status += f" · {site}" + (" · NSFW included" if nsfw else "")
                     return (html_out, status) + tuple(enum_updates)
 
                 ci_search_btn.click(
                     fn=_ci_do_search,
-                    inputs=[ci_search, ci_type, ci_base, ci_nsfw],
+                    inputs=[ci_search, ci_type, ci_base, ci_nsfw, ci_site],
                     outputs=[ci_results, ci_status, ci_type, ci_base],
                 )
                 ci_search.submit(
                     fn=_ci_do_search,
-                    inputs=[ci_search, ci_type, ci_base, ci_nsfw],
+                    inputs=[ci_search, ci_type, ci_base, ci_nsfw, ci_site],
                     outputs=[ci_results, ci_status, ci_type, ci_base],
                 )
 
