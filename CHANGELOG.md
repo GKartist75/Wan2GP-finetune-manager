@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.6.5 (2026-10-18)
+
+### Fixed
+- **CivitAI Type / Base Model dropdowns could not select any Wan2GP architecture** — they were a hardcoded list of 11 SD/SDXL/Pony/Flux.1 entries, and Type sent `ControlNet` where the API expects `Controlnet`. Both dropdowns now read CivitAI's live `/api/v1/enums` (one cached request), so Wan Video 2.1/2.2, LTXV 2.3/2.5, MiniMax H3, Hunyuan Video, Qwen, Z-Image, Krea 2, Flux.2 Klein and the rest are all selectable, with a built-in fallback list covering the Wan2GP architectures when offline. Base Model is now filterable.
+- **Filtered CivitAI searches returned nothing** — `query` is a Meilisearch full-text search that applies `types`/`baseModels` to each page of its matches only, so a search like `anime` + `Wan Video 14B t2v` came back empty. Filtered searches now run three lookups concurrently (cursor-paged `query`, the server-side `tag` filter, and a local name/tag/creator match over the most downloaded models for those filters) and merge them without duplicates. A Type / Base Model can also be used with an empty search term to browse the most downloaded models.
+- **A single dropped connection aborted the whole search** — every CivitAI request now goes through one helper that retries dropped TLS handshakes, resets, timeouts, HTTP 5xx and HTTP 429 (honouring `Retry-After`), and API errors are reported in the status line instead of a bare "No results found".
+
+### Added
+- **Include NSFW** checkbox in the CivitAI tab — mature models are hidden by the API unless asked for. The checkbox includes them, and `"civitai_nsfw": true` in `config.json` makes it the default (`false` when the key is absent, so existing installs behave as before). Documented in the README and `config.example.json`.
+- **Background enum loading** — the dropdowns are built from the built-in list and upgraded to CivitAI's live values in the background when the tab is opened or a search runs, so an unreachable or slow CivitAI can no longer stall Wan2GP startup (`_civitai_prefetch_enums`, `_civitai_enum_updates`, `_civitai_load_enums`).
+
+### Changed
+- Bumped version to 3.6.5 (plugin.py + plugin_info.json).
+- Removed the unused `CIVITAI_BASE_MODEL_MAP`.
+
+CivitAI filter work contributed by HateTM ([PR #1](https://github.com/GKartist75/Wan2GP-finetune-manager/pull/1)), with the lazy-loading, 429 and documentation fixes on top.
+
 ## v3.6.4 (2026-08-13)
 
 ### Fixed
