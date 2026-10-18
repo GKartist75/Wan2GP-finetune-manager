@@ -12,6 +12,7 @@ import gradio as gr
 from shared.utils.plugins import WAN2GPPlugin
 from shared.gradio.local_file_picker import LocalFilePickerTextbox
 import copy
+import threading
 import time
 
 
@@ -1207,22 +1208,6 @@ def _download_finetune_files(data: dict) -> str:
 
 CIVITAI_API = "https://civitai.com/api/v1"
 
-CIVITAI_BASE_MODEL_MAP = {
-    "SDXL 1.0": "sdxl",
-    "SDXL 0.9": "sdxl",
-    "SD 1.5": "sd15",
-    "SD 1.4": "sd15",
-    "SD 2.0": "sd2",
-    "SD 2.1": "sd2",
-    "Pony": "pony",
-    "SDXL Turbo": "sdxl_turbo",
-    "SD 3": "sd3",
-    "SD 3.5": "sd35",
-    "Flux.1 D": "flux_dev",
-    "Flux.1 S": "flux_schnell",
-    "Flux": "flux",
-}
-
 
 CIVITAI_FALLBACK_ENUMS = {
     "ModelType": [
@@ -1243,38 +1228,106 @@ CIVITAI_FALLBACK_ENUMS = {
         "SD 1.5", "SD 2.1", "SD 3", "SD 3.5", "Other",
     ],
 }
+_CIVITAI_ENUM_KEYS = ("ModelType", "BaseModel")
 _civitai_enums_cache: dict = {}
+_civitai_enums_loading = False
+_civitai_enums_lock = threading.Lock()
+
+
+def _civitai_retry_delay(error, default: float, cap: float = 10.0) -> float:
+    """Seconds to wait before retrying: honour Retry-After on a 429 response."""
+    try:
+        raw = (error.headers.get("Retry-After") or "").strip()
+    except Exception:
+        raw = ""
+    if raw:
+        try:
+            return max(0.0, min(float(raw), cap))
+        except ValueError:
+            pass
+    return default
 
 
 def _civitai_get_json(url: str, timeout: int = 20, attempts: int = 3):
-    """GET a CivitAI API URL as JSON, retrying transient network failures
-    (dropped TLS handshakes, resets, timeouts) that otherwise abort a search."""
+    """GET a CivitAI API URL as JSON, retrying the transient failures that
+    otherwise abort a search: dropped TLS handshakes, resets, timeouts, HTTP 5xx
+    and rate limiting (429, honouring Retry-After when the server sends one)."""
     for attempt in range(attempts):
+        last = attempt == attempts - 1
         try:
             req = urllib.request.Request(url)
             req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
-            return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
-            if e.code < 500 or attempt == attempts - 1:
+            if last or (e.code != 429 and e.code < 500):
                 raise
+            delay = _civitai_retry_delay(e, 1.0) if e.code == 429 else 0.7 * (attempt + 1)
         except (urllib.error.URLError, OSError):
-            if attempt == attempts - 1:
+            if last:
                 raise
-        time.sleep(0.7 * (attempt + 1))
+            delay = 0.7 * (attempt + 1)
+        time.sleep(delay)
 
 
-def _civitai_enum(key: str) -> list:
-    """Live CivitAI enum values (base models, model types); falls back to a built-in
-    list when offline so the filters still cover WanGP architectures."""
-    if key not in _civitai_enums_cache:
-        values = []
+def _civitai_enum_choices(key: str) -> list:
+    """Dropdown choices for a CivitAI enum: live values once fetched, otherwise the
+    built-in list. Never performs network I/O, so it is safe to call while the
+    plugin UI is being built."""
+    return ["All"] + (
+        _civitai_enums_cache.get(key) or CIVITAI_FALLBACK_ENUMS.get(key, [])
+    )
+
+
+def _civitai_enum_updates(*current: str) -> list:
+    """Refresh the Type / Base Model dropdowns to the live enum values while keeping
+    the user's current selection. Applied after a search or when the tab is opened,
+    so the filters upgrade from the built-in list without ever stalling the UI."""
+    updates = []
+    for value, key in zip(current, _CIVITAI_ENUM_KEYS):
+        choices = _civitai_enum_choices(key)
+        updates.append(
+            gr.update(choices=choices, value=value if value in choices else "All")
+        )
+    return updates
+
+
+def _civitai_load_enums() -> bool:
+    """Fetch /enums once and cache it (one request fills every key).
+    Returns True when live values were cached; never raises."""
+    try:
+        data = _civitai_get_json(f"{CIVITAI_API}/enums", timeout=5, attempts=2)
+    except Exception:
+        return False
+    found = {
+        key: [v for v in (data.get(key) or []) if isinstance(v, str) and v]
+        for key in _CIVITAI_ENUM_KEYS
+    }
+    if not all(found.values()):
+        return False
+    _civitai_enums_cache.update(found)
+    return True
+
+
+def _civitai_prefetch_enums() -> None:
+    """Warm the enum cache on a background thread. Building the UI must never wait on
+    CivitAI, so an unreachable or slow API costs the user nothing at startup."""
+    global _civitai_enums_loading
+    if _civitai_enums_cache:
+        return
+    with _civitai_enums_lock:
+        if _civitai_enums_loading:
+            return
+        _civitai_enums_loading = True
+
+    def _worker():
+        global _civitai_enums_loading
         try:
-            data = _civitai_get_json(f"{CIVITAI_API}/enums", timeout=5, attempts=2)
-            values = [v for v in data.get(key, []) if isinstance(v, str) and v]
-        except Exception:
-            pass
-        _civitai_enums_cache[key] = values or CIVITAI_FALLBACK_ENUMS.get(key, [])
-    return ["All"] + _civitai_enums_cache[key]
+            _civitai_load_enums()
+        finally:
+            _civitai_enums_loading = False
+
+    threading.Thread(target=_worker, name="civitai-enums", daemon=True).start()
 
 
 def _civitai_search(
@@ -3397,7 +3450,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 l_status = gr.Textbox(label="Status")
 
             # ── CIVITAI ──
-            with gr.TabItem("CivitAI", id="civitai"):
+            with gr.TabItem("CivitAI", id="civitai") as ci_tab:
                 gr.Markdown("Search CivitAI for models and auto-fill into Create/Edit.")
                 with gr.Row():
                     ci_search = gr.Textbox(
@@ -3408,13 +3461,13 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     )
                     ci_type = gr.Dropdown(
                         label="Type",
-                        choices=_civitai_enum("ModelType"),
+                        choices=_civitai_enum_choices("ModelType"),
                         value="All",
                         scale=1,
                     )
                     ci_base = gr.Dropdown(
                         label="Base Model",
-                        choices=_civitai_enum("BaseModel"),
+                        choices=_civitai_enum_choices("BaseModel"),
                         filterable=True,
                         value="All",
                         scale=1,
@@ -3440,16 +3493,31 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     visible=False, elem_id="civitai-selected", value="{}"
                 )
 
+                def _ci_refresh_filters(mtype, base):
+                    """Upgrade the filters to CivitAI's live enum values when the tab is
+                    opened. The UI is built from the built-in list, and the fetch runs on
+                    a background thread, so nothing here waits on the network."""
+                    _civitai_prefetch_enums()
+                    return _civitai_enum_updates(mtype, base)
+
+                ci_tab.select(
+                    fn=_ci_refresh_filters,
+                    inputs=[ci_type, ci_base],
+                    outputs=[ci_type, ci_base],
+                )
+
                 def _ci_do_search(query, mtype, base, nsfw=False):
                     query = (query or "").strip()
                     filtered = mtype not in ("", "All", None) or base not in ("", "All", None)
+                    _civitai_prefetch_enums()
+                    enum_updates = _civitai_enum_updates(mtype, base)
                     if not query and not filtered:
                         return (
                             "<div style='color:#9ca3af;"
                             "text-align:center;padding:32px'>"
                             "Enter a search term or pick a Type / Base Model</div>",
                             "",
-                        )
+                        ) + tuple(enum_updates)
                     data = _civitai_search(query, model_type=mtype, base_model=base, nsfw=bool(nsfw))
                     html_out = _civitai_render_results(data)
                     count = len(data.get("items", [])) if "error" not in data else 0
@@ -3461,17 +3529,17 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if "error" in data
                         else "No results found"
                     )
-                    return html_out, status
+                    return (html_out, status) + tuple(enum_updates)
 
                 ci_search_btn.click(
                     fn=_ci_do_search,
                     inputs=[ci_search, ci_type, ci_base, ci_nsfw],
-                    outputs=[ci_results, ci_status],
+                    outputs=[ci_results, ci_status, ci_type, ci_base],
                 )
                 ci_search.submit(
                     fn=_ci_do_search,
                     inputs=[ci_search, ci_type, ci_base, ci_nsfw],
-                    outputs=[ci_results, ci_status],
+                    outputs=[ci_results, ci_status, ci_type, ci_base],
                 )
 
                 def _ci_fill(civitai_json_str):

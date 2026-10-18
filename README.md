@@ -59,6 +59,16 @@ A token is only needed to **upload** finetunes — browsing, searching, and down
 > ⚠️ `config.json` is gitignored — your token stays local and will never be committed.
 > 💡 No token? Skip steps 1-3. You can still use Browse, Create/Edit, Local, and CivitAI tabs. Upload will show a clear error asking you to set up your token.
 
+#### Optional: CivitAI mature content
+
+CivitAI hides mature models unless they are asked for. Tick **Include NSFW** in the CivitAI tab, or make it the default in `config.json`:
+
+```json
+{"registry_token": "hf_YOUR_TOKEN_HERE", "civitai_nsfw": true}
+```
+
+`civitai_nsfw` defaults to `false` when the key is absent, so an existing `config.json` keeps the previous behaviour. See [`config.example.json`](./config.example.json).
+
 ### How It Works
 
 ![Upload flow diagram](./hf-upload-flow.svg)

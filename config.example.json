@@ -1,4 +1,6 @@
 {
   "_instructions": "Copy this file to config.json, then replace the token below with your own. Get one at https://huggingface.co/settings/tokens",
-  "registry_token": "hf_YOUR_TOKEN_HERE"
+  "registry_token": "hf_YOUR_TOKEN_HERE",
+  "_civitai_nsfw": "Optional: true = include mature models in CivitAI search by default. Omit or false = the plugin behaves as before (SFW only).",
+  "civitai_nsfw": false
 }
