@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.6.7 (2026-10-19)
+
+### Fixed
+- **Editor round-trip lost or resurrected data** — clearing a URL, LoRA, custom-resolution, solver, or prompt field now removes it from the saved finetune instead of keeping the old value, and clearing the prompt clears the stored default.
+- **Single-string model references were saved as one-item lists** — `URLs`, `URLs2`, `text_encoder_URLs`, `VAE_URLs`, `preload_URLs`, and `loras` now keep the scalar form required by `docs/FINETUNES.md` ("a single text which corresponds to the id of a finetune or default model"). A single bare filename is still treated as a file entry and flagged.
+- **LoRA edits could be silently overridden** — the top-level `activated_loras` / `loras_multipliers` copy is now kept in sync with `model.loras`; a string model reference no longer gets multipliers or a list-wrapped `activated_loras`.
+- **Custom resolutions were replaced by the top-level default resolution** on save — extraction now reads `model.resolutions` only, as the Finetune Editor does.
+- **Step multipliers containing commas (`1,1.1;0`) were split into separate values** — multipliers now split on whitespace only.
+- **CivitAI DoRA/LoCon models were routed to the checkpoint field** — the type check had `DOJO` instead of `DORA`; it now accepts `LORA`, `LOCON`, and `DORA`.
+- **CivitAI "Use" buttons never worked** — they depended on a `<script>` inside `gr.HTML`, which Gradio does not execute. Version selection now uses a real `Result version` dropdown and the existing Fill button.
+- **Uploads could publish a CivitAI API key** — save & upload and local upload now refuse finetunes whose URLs contain `token=` and keep the local file, with a message naming the affected fields.
+- **Cancel/Delete left stale editor state** — both now reset the loaded finetune state, and Delete also removes the matching `settings/<id>_settings.json`.
+- **Local import silently overwrote an existing finetune** — it now refuses and asks the user to delete or rename the existing file first.
+- **Registry download, create-variant, and local upload skipped schema validation** — all now use `_validate_finetune_data()` like the load paths.
+- **Settings id could disagree with the finetune filename** — `settings.model_type` and the settings filename now use the same `_sanitize_fin_id()` as the finetune file.
+- **Architecture filter only offered five hardcoded values** — Refresh now fills it from the registry, and custom values can be typed.
+- **Local "Export JSON" button was created outside the Local tab** — Gradio placed the orphan `DownloadButton` directly in the plugin's `Tabs` container (and warned about it); it is now inside the Local tab.
+- **Card click handler broke on IDs containing quotes** — the finetune id is now JSON-encoded and the whole `onclick` value HTML-escaped, so a filename with `'` or `"` can no longer break the attribute or inject markup; only `http(s)` URL entries are rendered as clickable links.
+- **URL validation leaked response objects** — HEAD/GET responses are now closed.
+
+### Changed
+- Bumped version to 3.6.7 (plugin.py + plugin_info.json).
+- Removed the unused `MD_TOOLBAR_JS` script (it could not execute inside `gr.HTML`) and the unused `_parse_maybe_scalar()` helper.
+- README and user guide: CivitAI fill is described as version-picker + Fill.
+
 ## v3.6.6 (2026-10-18)
 
 ### Added

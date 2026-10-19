@@ -30,6 +30,10 @@ def _check_bare_filenames(data: dict) -> list[str]:
     for key in _URL_KEYS:
         vals = m.get(key, [])
         if isinstance(vals, str):
+            # A single string is either a model reference (valid) or a bare
+            # filename/URL. Model references must not be flagged.
+            if vals.strip().startswith("=") or _is_model_ref_text(vals.strip()):
+                continue
             vals = [vals]
         if not isinstance(vals, list):
             continue
@@ -40,6 +44,13 @@ def _check_bare_filenames(data: dict) -> list[str]:
             if not v:
                 continue
             if v.startswith(("http://", "https://", "=")):
+                continue
+            if _is_model_ref_text(v):
+                warnings.append(
+                    f"'{key}' contains the model reference '{v}' inside a list — "
+                    "Wan2GP only resolves a model reference when the field is a "
+                    "single string, not a list entry"
+                )
                 continue
             warnings.append(f"'{key}' has a bare filename: '{v}' — needs a full https:// URL for Wan2GP auto-download")
     return warnings
@@ -73,25 +84,31 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
     finetune ID) is added.  Unrecognized keys are ignored by Wan2GP.
     """
     settings = dict(data)
-    settings["model_type"] = fid
+    safe_id = _sanitize_fin_id(fid)
+    # The model id must match the sanitized finetune filename, otherwise
+    # load_settings_from_file() cannot find the model and silently falls back.
+    settings["model_type"] = safe_id
     # Promote finetune-format model.loras / model.loras_multipliers to
     # Wan2GP-format top-level activated_loras / loras_multipliers.
     # If top-level already present they win; otherwise pull from model sub-object.
     m = data.get("model", {})
     if "activated_loras" not in settings and "loras" in m:
         loras = m["loras"]
+        # A single string is a model-reference reuse (per FINETUNES.md), not a
+        # LoRA filename; copying it into activated_loras would break it.
         if isinstance(loras, list):
             settings["activated_loras"] = loras
-        elif isinstance(loras, str):
-            settings["activated_loras"] = [loras]
-    if "loras_multipliers" not in settings and "loras_multipliers" in m:
+    if (
+        "loras_multipliers" not in settings
+        and "loras_multipliers" in m
+        and not isinstance(m.get("loras"), str)
+    ):
         lms = m["loras_multipliers"]
         if isinstance(lms, list):
             settings["loras_multipliers"] = " ".join(str(x) for x in lms)
         else:
             settings["loras_multipliers"] = str(lms)
-    safe_id = _re.sub(r"[^A-Za-z0-9_.-]+", "_", fid.strip()).strip("_.-") or "unnamed"
-    p = Path("settings") / f"{safe_id}_settings.json"
+    p = _settings_path_for(fid)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(settings, indent=4), encoding="utf-8")
     return p
@@ -99,7 +116,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.6.6"
+PLUGIN_VERSION = "3.6.7"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -200,6 +217,28 @@ DOWNLOAD_URL_KEYS = [
 # Indices of URL/LoRA/path fields in ALL_INPUTS (editor tab)
 URL_FIELD_IDX = [5, 6, 7, 8, 9, 10, 11, 12]
 
+
+def _find_token_urls(data: dict) -> list[str]:
+    """Return URL/LoRA values that embed a CivitAI `token=` query parameter.
+
+    These work locally because WanGP downloads with the URL, but uploading the
+    finetune would publish the API key. Upload paths call this to refuse.
+    """
+    m = data.get("model", {}) if isinstance(data, dict) else {}
+    if not isinstance(m, dict):
+        return []
+    found = []
+    for key in DOWNLOAD_URL_KEYS + ["loras"]:
+        vals = m.get(key, [])
+        if isinstance(vals, str):
+            vals = [vals]
+        if not isinstance(vals, list):
+            continue
+        for v in vals:
+            if isinstance(v, str) and "token=" in v:
+                found.append(f"{key}: {v}")
+    return found
+
 # ── Registry cache: avoids redundant N+1 fetches on rapid Refresh ──
 _REGISTRY_CACHE: list[dict] | None = None
 _REGISTRY_CACHE_TIME: float = 0
@@ -276,15 +315,12 @@ def _fmt_card_html_item(
                 f"+{len(ftags_list) - 4}</span>"
             )
         tags_badges += "</div>"
-    fid_safe = (
-        fid.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
-    )
     onclick = (
         f"var r=(window.gradioApp?window.gradioApp():"
         f"document.querySelector('gradio-app'))||document;"
         f"r=r.shadowRoot||r;"
         f"var ta=r.querySelector('#{sel_elem_id} textarea');"
-        f"if(ta){{ta.value='{fid_safe}';"
+        f"if(ta){{ta.value={json.dumps(fid)};"
         f"ta.dispatchEvent(new Event('input',{{bubbles:true}}))}}"
     )
 
@@ -297,10 +333,15 @@ def _fmt_card_html_item(
         link_parts = []
         for u in shown:
             eu = html.escape(u)
-            link_parts.append(
-                f'<a href="{eu}" target="_blank" rel="noopener" '
-                f'style="word-break:break-all">{eu}</a>'
-            )
+            if u.startswith(("http://", "https://")):
+                link_parts.append(
+                    f'<a href="{eu}" target="_blank" rel="noopener" '
+                    f'style="word-break:break-all">{eu}</a>'
+                )
+            else:
+                link_parts.append(
+                    f'<span style="word-break:break-all">{eu}</span>'
+                )
         files_html = '<div class="fm-card-files">' + " ".join(link_parts)
         if extra > 0:
             files_html += f' <span style="color:#9ca3af">+{extra} more</span>'
@@ -319,7 +360,7 @@ def _fmt_card_html_item(
         loras_html += "</div>"
 
     return (
-        f'<div class="fm-card{c}" onclick="{onclick}">'
+        f'<div class="fm-card{c}" onclick="{html.escape(onclick, quote=True)}">'
         f"<div class='fm-card-title'>{safe_name}</div>"
         f"<div class='fm-card-meta'>"
         f"<span class='fm-badge'>{html.escape(tag)}</span> {safe_author}</div>"
@@ -428,7 +469,9 @@ def build_finetune_dict(
 
     # ── Utility: type-preserving copy helpers ──
     def _to_typed_multipliers(raw: str):
-        parts = [x.strip() for x in raw.replace(",", " ").split() if x.strip()]
+        # Split on whitespace only: commas are meaningful in step multipliers
+        # such as "1,1.1;0" and must not be treated as separators.
+        parts = raw.split()
         typed = []
         for p in parts:
             try:
@@ -479,18 +522,22 @@ def build_finetune_dict(
             m["prompt_infos"] = pinf
         elif "prompt_infos" in m:
             del m["prompt_infos"]
-        parsed_urls = _parse_maybe_scalar(urls)
-        if parsed_urls is not None:
-            m["URLs"] = parsed_urls
-        parsed_urls2 = _parse_maybe_scalar(urls2)
-        if parsed_urls2 is not None:
-            m["URLs2"] = parsed_urls2
-        parsed_te = _parse_maybe_scalar(te)
-        if parsed_te is not None:
-            m["text_encoder_URLs"] = parsed_te
-        parsed_vae = _parse_maybe_scalar(vae)
-        if parsed_vae is not None:
-            m["VAE_URLs"] = parsed_vae
+        for key, raw in (
+            ("URLs", urls),
+            ("URLs2", urls2),
+            ("text_encoder_URLs", te),
+            ("VAE_URLs", vae),
+        ):
+            parsed = _parse_reference_or_lines(raw)
+            if parsed is not None:
+                m[key] = parsed
+            else:
+                m.pop(key, None)
+        parsed_loras = _parse_reference_or_lines(loras)
+        if parsed_loras is not None:
+            m["loras"] = parsed_loras
+        else:
+            m.pop("loras", None)
         if cu1:
             m["custom_url_1"] = cu1
         elif "custom_url_1" in m:
@@ -507,20 +554,13 @@ def build_finetune_dict(
             m["modules"] = [x.strip() for x in mods.split(",") if x.strip()]
         elif "modules" in m:
             del m["modules"]
-        # preload_URLs: preserve original string/list type
-        orig_pre = orig_m.get("preload_URLs")
-        if isinstance(orig_pre, str):
-            m["preload_URLs"] = pre if pre else orig_pre
+        # preload_URLs accepts URLs or a single model-reference string.
+        parsed_pre = _parse_reference_or_lines(pre)
+        if parsed_pre is not None:
+            m["preload_URLs"] = parsed_pre
         else:
-            parsed_pre = _parse_maybe_scalar(pre)
-            if parsed_pre is not None:
-                m["preload_URLs"] = parsed_pre
-            elif "preload_URLs" in m:
-                del m["preload_URLs"]
-        parsed_loras = _parse_maybe_scalar(loras)
-        if parsed_loras is not None:
-            m["loras"] = parsed_loras
-        if lm:
+            m.pop("preload_URLs", None)
+        if lm and isinstance(parsed_loras, list):
             m["loras_multipliers"] = _to_typed_multipliers(lm)
         elif "loras_multipliers" in m:
             del m["loras_multipliers"]
@@ -540,12 +580,10 @@ def build_finetune_dict(
             m["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
         elif "tags" in m:
             del m["tags"]
-        if res:
-            orig_had_res = "resolutions" in orig_m
-            if orig_had_res:
-                m["resolutions"] = _parse_resolutions(res)
-        elif "resolutions" in m:
-            del m["resolutions"]
+        if res.strip():
+            m["resolutions"] = _parse_resolutions(res)
+        else:
+            m.pop("resolutions", None)
         if resc:
             m["resolutions_categories"] = [x.strip() for x in resc.split("\n") if x.strip()]
         elif "resolutions_categories" in m:
@@ -586,18 +624,15 @@ def build_finetune_dict(
             m["infos"] = inf
         if pinf:
             m["prompt_infos"] = pinf
-        parsed_urls = _parse_maybe_scalar(urls)
-        if parsed_urls is not None:
-            m["URLs"] = parsed_urls
-        parsed_urls2 = _parse_maybe_scalar(urls2)
-        if parsed_urls2 is not None:
-            m["URLs2"] = parsed_urls2
-        parsed_te = _parse_maybe_scalar(te)
-        if parsed_te is not None:
-            m["text_encoder_URLs"] = parsed_te
-        parsed_vae = _parse_maybe_scalar(vae)
-        if parsed_vae is not None:
-            m["VAE_URLs"] = parsed_vae
+        for key, raw in (
+            ("URLs", urls),
+            ("URLs2", urls2),
+            ("text_encoder_URLs", te),
+            ("VAE_URLs", vae),
+        ):
+            parsed = _parse_reference_or_lines(raw)
+            if parsed is not None:
+                m[key] = parsed
         if cu1:
             m["custom_url_1"] = cu1
         if cu2:
@@ -606,13 +641,13 @@ def build_finetune_dict(
             m["custom_url_3"] = cu3
         if mods:
             m["modules"] = [x.strip() for x in mods.split(",") if x.strip()]
-        parsed_pre = _parse_maybe_scalar(pre)
+        parsed_pre = _parse_reference_or_lines(pre)
         if parsed_pre is not None:
             m["preload_URLs"] = parsed_pre
-        parsed_loras = _parse_maybe_scalar(loras)
+        parsed_loras = _parse_reference_or_lines(loras)
         if parsed_loras is not None:
             m["loras"] = parsed_loras
-        if lm:
+        if lm and isinstance(parsed_loras, list):
             m["loras_multipliers"] = _to_typed_multipliers(lm)
         if aq:
             m["auto_quantize"] = True
@@ -622,7 +657,7 @@ def build_finetune_dict(
             m["image_outputs"] = True
         if tags:
             m["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
-        if res:
+        if res.strip():
             m["resolutions"] = _parse_resolutions(res)
         if resc:
             m["resolutions_categories"] = [x.strip() for x in resc.split("\n") if x.strip()]
@@ -643,14 +678,6 @@ def build_finetune_dict(
     orig_out = extra_data if isinstance(extra_data, dict) else {}
     if orig_out:
         # Seed with all original top-level keys in order, then overwrite
-        m.setdefault("settings", {})
-        m["settings"].update({
-            "prompt": prompt or "",
-            "num_inference_steps": int(steps),
-            "guidance_scale": float(guid),
-        })
-        if solver:
-            m["settings"]["sample_solver"] = solver
         out: dict = {}
         for k, v in orig_out.items():
             if k != "model":
@@ -658,34 +685,42 @@ def build_finetune_dict(
         out["model"] = m
         # Overwrite form-provided fields (keeps their original positions)
         out["num_inference_steps"] = int(steps)
-        gd = float(guid)
-        orig_gd = orig_out.get("guidance_scale")
-        if isinstance(orig_gd, int):
-            out["guidance_scale"] = int(gd)
-        else:
-            out["guidance_scale"] = gd
+        out["guidance_scale"] = float(guid)
         if solver:
             out["sample_solver"] = solver
-        if prompt:
-            out["prompt"] = prompt
+        else:
+            out.pop("sample_solver", None)
+        # Clearing the prompt must clear the stored default too.
+        out["prompt"] = prompt
     else:
         # Fresh build — canonical order
         out: dict = {}
         out["model"] = m
-        m["settings"] = {
-            "prompt": prompt or "",
-            "num_inference_steps": int(steps),
-            "guidance_scale": float(guid),
-        }
-        if solver:
-            m["settings"]["sample_solver"] = solver
         out["num_inference_steps"] = int(steps)
-        gd = float(guid)
-        out["guidance_scale"] = gd
+        out["guidance_scale"] = float(guid)
         if solver:
             out["sample_solver"] = solver
         if prompt:
             out["prompt"] = prompt
+
+    # Keep the top-level (settings-format) LoRA copy in sync with model.loras.
+    # Registry finetunes often carry both, and _write_settings_for_wan2gp
+    # gives the top-level copy priority, so a stale copy silently wins.
+    if isinstance(parsed_loras, list):
+        out["activated_loras"] = parsed_loras
+        if lm:
+            out["loras_multipliers"] = " ".join(
+                str(x) for x in _to_typed_multipliers(lm)
+            )
+        else:
+            out.pop("loras_multipliers", None)
+    elif isinstance(parsed_loras, str):
+        # Single-string model-reference reuse: it belongs to model.loras only.
+        out.pop("activated_loras", None)
+        out.pop("loras_multipliers", None)
+    else:
+        out.pop("activated_loras", None)
+        out.pop("loras_multipliers", None)
 
     return out
 
@@ -728,13 +763,15 @@ def extract_finetune_fields(d: dict) -> tuple:
             return ",".join(str(x) for x in v)
         return str(v) if v else ""
 
-    res = d.get("resolution", "")
-    if not res:
-        for r in m.get("resolutions", []):
-            if isinstance(r, list) and len(r) >= 2:
-                res += r[1] + "\n"
-            elif isinstance(r, str):
-                res += r + "\n"
+    # Custom resolutions belong to the finetune definition (model.resolutions).
+    # The top-level "resolution" is the author's current default and is not the
+    # same field; showing it here used to replace the real custom list on save.
+    res = ""
+    for r in m.get("resolutions", []) or []:
+        if isinstance(r, list) and len(r) >= 2:
+            res += r[1] + "\n"
+        elif isinstance(r, str):
+            res += r + "\n"
     rc = "\n".join(m.get("resolutions_categories", []))
     st = d.get("num_inference_steps")
     if st is None:
@@ -791,52 +828,6 @@ def extract_finetune_fields(d: dict) -> tuple:
             d.get("prompt", ""),
         )
     )
-
-
-# Markdown toolbar JS (from built-in Finetune Editor)
-MD_TOOLBAR_JS = """<script>
-(function(){
-if(window.__fmMdToolbar)return;window.__fmMdToolbar=true;
-function root(){
-if(window.gradioApp)return window.gradioApp();
-var app=document.querySelector('gradio-app');
-return app?(app.shadowRoot||app):document;
-}
-function snippet(a){
-var m={bold:{p:"**",s:"**",x:"bold text"},italic:{p:"*",s:"*",x:"italic text"},heading:{p:"## ",s:"",x:"Heading"},list:{p:"- ",s:"",x:"item"},link:{p:"[",s:"](https://)",x:"link text"},code:{p:"`",s:"`",x:"code"}};
-return m[a]||{p:"",s:"",x:""};
-}
-function tbHTML(){
-return '<div style="display:flex;gap:4px;padding:3px 0">'+
-'<button type=button data-md-action=bold style="width:26px;height:24px;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;background:var(--button-secondary-background-fill,#f5f5f5);cursor:pointer;font-size:12px"><b>B</b></button>'+
-'<button type=button data-md-action=italic style="width:26px;height:24px;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;background:var(--button-secondary-background-fill,#f5f5f5);cursor:pointer;font-size:12px"><i>I</i></button>'+
-'<button type=button data-md-action=heading style="width:26px;height:24px;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;background:var(--button-secondary-background-fill,#f5f5f5);cursor:pointer;font-size:12px">H</button>'+
-'<button type=button data-md-action=list style="width:26px;height:24px;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;background:var(--button-secondary-background-fill,#f5f5f5);cursor:pointer;font-size:12px">\u2022</button>'+
-'<button type=button data-md-action=link style="width:26px;height:24px;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;background:var(--button-secondary-background-fill,#f5f5f5);cursor:pointer;font-size:12px">\u2197</button>'+
-'<button type=button data-md-action=code style="width:26px;height:24px;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;background:var(--button-secondary-background-fill,#f5f5f5);cursor:pointer;font-size:12px">`</button></div>';
-}
-function inject(){
-var r=root();if(!r)return;
-r.querySelectorAll('.wangp-markdown-editor').forEach(function(el){
-if(el.dataset.fmToolbar)return;el.dataset.fmToolbar='1';
-var tb=document.createElement('div');tb.innerHTML=tbHTML();
-tb.addEventListener('click',function(e){
-var btn=e.target.closest('[data-md-action]');if(!btn)return;e.preventDefault();
-var action=btn.getAttribute('data-md-action');
-var textarea=el.querySelector('textarea');if(!textarea)return;
-var s=snippet(action);var st=textarea.selectionStart,en=textarea.selectionEnd;
-var sel=textarea.value.slice(st,en)||s.x;
-textarea.setRangeText(s.p+sel+s.s,st,en,'select');
-textarea.dispatchEvent(new Event('input',{bubbles:true}));
-textarea.dispatchEvent(new Event('change',{bubbles:true}));
-});
-el.parentNode.insertBefore(tb,el);
-});
-}
-inject();
-new MutationObserver(inject).observe(root()||document.body,{childList:true,subtree:true});
-})();
-</script>"""
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -915,14 +906,52 @@ def _pop_extra(vals: tuple) -> tuple[dict | None, tuple]:
     return None, vals
 
 
-def _parse_maybe_scalar(value: str) -> list[str] | None:
-    """Parse a multi-line input. Always returns a list (never a scalar)
-    so that a single-element list in the original JSON round-trips as
-    a list, not as a bare string.
-    - None if the input is empty after stripping."""
+def _is_model_ref_text(value: str) -> bool:
+    """True when a single line is a Wan2GP model id (not a URL/path).
+
+    Wan2GP resolves a model reference only when the field value is a *string*;
+    a list entry is treated as a filename.  The ref dropdown writes `=id`, but
+    users also paste bare model ids, so recognise both forms.
+    """
+    value = (value or "").strip()
+    if not value or value.startswith(("http://", "https://", "=")):
+        return False
+    if "/" in value or "\\" in value:
+        return False
+    if len(value) > 1 and value[1] == ":":
+        return False
+    if value in MODEL_INDEX:
+        return True
+    # Per docs/FINETUNES.md, a single bare text in these fields *is* a model
+    # id. A bare filename (no directory) is the exception: keep it a list
+    # entry so the bare-filename warning can flag it.
+    suffix = Path(value).suffix.lower()
+    if suffix in {
+        ".safetensors", ".sft", ".ckpt", ".pt", ".pth", ".bin", ".gguf",
+        ".json", ".yaml", ".yml", ".txt",
+    }:
+        return False
+    return True
+
+
+def _parse_reference_or_lines(value: str):
+    """Parse a URL/LoRA field, preserving Wan2GP's scalar model-reference form.
+
+    Returns:
+      - None for an empty field (the caller removes the key)
+      - a string model id for a single `=id` / bare model id
+      - a list of URLs or local paths otherwise
+    """
     lines = [x.strip() for x in (value or "").split("\n") if x.strip()]
     if not lines:
         return None
+    if len(lines) == 1:
+        line = lines[0]
+        if line.startswith("="):
+            ref = line[1:].strip()
+            return ref or None
+        if _is_model_ref_text(line):
+            return line
     return lines
 
 
@@ -1044,7 +1073,7 @@ def _validate_entry(value: str) -> tuple[bool, str]:
         return _validate_url(v)
     if v.startswith(("/", ".", "\\")) or (len(v) > 1 and v[1] == ":"):
         return _validate_local_path(v)
-    # Could be a bare model ID stored by _parse_maybe_scalar
+    # Could be a bare model ID stored in the URL/LoRA field
     # Check MODEL_INDEX first for a fast cache hit
     if v in MODEL_INDEX:
         return True, f"Model ref: {MODEL_INDEX[v]}"
@@ -1092,8 +1121,8 @@ def _validate_url(url: str) -> tuple[bool, str]:
         req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
         # Some servers reject HEAD on /resolve/main/ — try GET as fallback
         try:
-            resp = urllib.request.urlopen(req, timeout=15)
-            code = resp.getcode()
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                code = resp.getcode()
         except urllib.error.HTTPError as e:
             code = e.code
             if code in (405, 501, 403):
@@ -1103,8 +1132,8 @@ def _validate_url(url: str) -> tuple[bool, str]:
                 )
                 get_req.add_header("Range", "bytes=0-0")
                 try:
-                    get_resp = urllib.request.urlopen(get_req, timeout=15)
-                    code = get_resp.getcode()
+                    with urllib.request.urlopen(get_req, timeout=15) as get_resp:
+                        code = get_resp.getcode()
                 except urllib.error.HTTPError as e2:
                     code = e2.code
         if code and code < 400:
@@ -1461,9 +1490,8 @@ def _civitai_search(
     return {"items": items[:limit]}
 
 
-def _civitai_render_results(data: dict, site: str = "civitai.com") -> str:
-    """Render CivitAI search results as HTML cards for the chosen site, so the
-    download URLs the cards hand to Create/Edit belong to that host."""
+def _civitai_render_results(data: dict) -> str:
+    """Render CivitAI search results as HTML cards."""
     items = data.get("items", []) if "error" not in data else []
     error = data.get("error", "")
     if error:
@@ -1512,42 +1540,40 @@ def _civitai_render_results(data: dict, site: str = "civitai.com") -> str:
                 fname = html.escape(primary.get("name", "") if primary else "")
                 fsize = primary.get("sizeKB", 0) if primary else 0
                 size_str = f"{fsize / 1024:.1f}MB" if fsize else "?"
-                _civ_model_json = json.dumps(model, default=str).replace("'", "&#39;")
-                _civ_ver_json = json.dumps(v, default=str).replace("'", "&#39;")
                 parts.append(
                     f'<div style="display:flex;align-items:center;gap:6px;'
                     f'padding:3px 0;font-size:12px">'
                     f'<span style="color:var(--body-text-color,#374151);flex:1">'
                     f"<b>{vname}</b> — {base} — {size_str}</span>"
                     f'<span style="color:var(--body-text-color-subdued,#6b7280);font-size:11px">{fname}</span>'
-                    f'<button class="civitai-use-btn" '
-                    f"data-civitai-model='{_civ_model_json}' "
-                    f"data-civitai-version='{_civ_ver_json}' "
-                    f'style="padding:2px 10px;border:1px solid #6366f1;'
-                    f"border-radius:4px;background:var(--primary-100,#eef2ff);"
-                    f'color:var(--primary-500,#4338ca);cursor:pointer;font-size:11px">Use</button>'
                     f"</div>"
                 )
             parts.append("</div>")
         parts.append("</div>")
     parts.append("</div>")
-    parts.append("""<script>
-(function(){
-if(window.__fmCivitaiHandler)return;window.__fmCivitaiHandler=true;
-document.addEventListener('click',function(e){
-var btn=e.target.closest('.civitai-use-btn');
-if(!btn)return;e.preventDefault();
-var version=JSON.parse(btn.getAttribute('data-civitai-version')||'{}');
-var model=JSON.parse(btn.getAttribute('data-civitai-model')||'{}');
-var site="__CIVITAI_SITE__";
-var data=JSON.stringify({model:model,version:version,site:site});
-var r=(window.gradioApp?window.gradioApp():document.querySelector('gradio-app'))||document;r=r.shadowRoot||r;
-var ta=r.querySelector('#civitai-selected textarea');
-if(ta){ta.value=data;ta.dispatchEvent(new Event('input',{bubbles:true}));}
-});
-})();
-</script>""".replace("__CIVITAI_SITE__", _civitai_site(site)))
     return "".join(parts)
+
+
+def _civitai_result_options(data: dict, site: str = "civitai.com") -> list[tuple[str, str]]:
+    """Build the Version dropdown choices for a CivitAI search result.
+
+    Each value is the JSON payload consumed by _civitai_extract_fill_data, so
+    selection uses real Gradio state instead of script-injected HTML."""
+    items = data.get("items", []) if "error" not in data else []
+    options = []
+    for model in items:
+        model_name = model.get("name", "?") or "?"
+        for version in model.get("modelVersions", []):
+            label = (
+                f"{model_name} — {version.get('name', '?') or '?'}"
+                f" ({version.get('baseModel', '') or '?'})"
+            )
+            payload = json.dumps(
+                {"model": model, "version": version, "site": _civitai_site(site)},
+                default=str,
+            )
+            options.append((label, payload))
+    return options
 
 
 def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
@@ -1586,7 +1612,7 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
 
     mtype = model.get("type", "").upper()
     # Put URL in main checkpoints for non-LoRA, loras field for LoRA
-    if mtype in ("LORA", "DOJO"):
+    if mtype in ("LORA", "LOCON", "DORA"):
         # URL goes to loras field (index 12 in return tuple = ALL_INPUTS[13])
         result = [gr.update()] * 33
         result[12] = gr.update(value=dl_url)
@@ -1754,6 +1780,11 @@ def _sanitize_fin_id(fin_id: str) -> str:
     return cleaned if cleaned else "unnamed"
 
 
+def _settings_path_for(fin_id: str) -> Path:
+    """Settings file path using the same sanitized id as the finetune file."""
+    return Path("settings") / f"{_sanitize_fin_id(fin_id)}_settings.json"
+
+
 def _resolve_finetune_path(fin_id: str) -> Path | None:
     """Resolve a finetune JSON path and verify it's within FINETUNES_DIR.
     Returns None if the path escapes the directory."""
@@ -1807,8 +1838,7 @@ CARD_CSS = """
 [data-testid="json"] .json-holder { max-height:450px !important; overflow-y:auto !important }
 [data-testid="json"] .line .content { white-space:pre-wrap !important; word-break:break-word !important; overflow-wrap:break-word !important; line-height:1.65 !important; font-size:13px !important }
 [data-testid="json"] .line, [data-testid="json"] .json-node { min-height:1.65em !important; height:auto !important; max-height:none !important }
-/* CivatAI result cards */
-.civitai-use-btn:hover { background:#6366f1 !important; color:#fff !important }
+/* CivitAI result cards */
 /* Loading spinner overlay for buttons */
 .fm-spinner { display:inline-block; width:12px; height:12px; border:2px solid var(--border-color-primary,#e5e7eb); border-top-color:#6366f1; border-radius:50%; animation:fm-spin .6s linear infinite; margin-right:6px; vertical-align:middle }
 @keyframes fm-spin { to { transform:rotate(360deg) } }
@@ -1859,6 +1889,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "hunyuan_i2v",
                         ],
                         value="All",
+                        allow_custom_value=True,
                         scale=1,
                     )
                     b_tag_filter = gr.Dropdown(
@@ -1970,6 +2001,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     fins = _get_cached_registry(force=True)
                     html, cnt = _fmt_cards(fins, "", "All", "", "")
                     tags = _all_tags(fins)
+                    archs = sorted({
+                        str(f.get("architecture", "")).strip()
+                        for f in fins
+                        if str(f.get("architecture", "")).strip()
+                    })
                     return (
                         fins,
                         "",
@@ -1977,7 +2013,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         cnt,
                         gr.update(choices=tags, value=""),
                         gr.update(value=""),
-                        gr.update(value="All"),
+                        gr.update(choices=["All"] + archs, value="All"),
                     )
 
                 b_refresh.click(
@@ -2101,6 +2137,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = _fetch_registry_json(fid)
                     except Exception as e:
                         return f"Error: {e}"
+                    err = _validate_finetune_data(data)
+                    if err:
+                        return f"Cannot download '{fid}': {err}"
                     _write_finetune(fid, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
@@ -2125,6 +2164,13 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = _fetch_registry_json(fid)
                     except Exception as e:
                         return [gr.update()] * (len(ALL_INPUTS)) + [gr.update(), f"Error: {e}", {}]
+                    err = _validate_finetune_data(data)
+                    if err:
+                        return [gr.update()] * (len(ALL_INPUTS)) + [
+                            gr.update(),
+                            f"Cannot create variant: {err}",
+                            {},
+                        ]
                     # Preserve original finetune_source_model if it exists;
                     # only fall back to architecture if there's no source set.
                     model_dict = data.setdefault("model", {})
@@ -2147,7 +2193,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
             # ── CREATE / EDIT ──
             with gr.TabItem("Create / Edit", id="editor"):
-                gr.HTML(MD_TOOLBAR_JS, visible=False)
                 gr.Markdown(
                     "### Create or Edit \u2014 "
                     "matches the built-in Finetune Editor (Alt+F)"
@@ -2946,9 +2991,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     )
 
                 def _sanitize_id(text):
-                    v = _re.sub(r"[^A-Za-z0-9_.-]+", "_", str(text or "").strip())
-                    v = _re.sub(r"_+", "_", v).strip("._-")
-                    return v
+                    return _sanitize_fin_id(str(text or ""))
 
                 def _generate_id(name, source):
                     # Name-first: the finetune name is the dominant, readable
@@ -3055,8 +3098,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = json.loads(Path(s).read_text(encoding="utf-8"))
                     except (json.JSONDecodeError, OSError) as e:
                         return [gr.update()] * n_inputs + [f"Invalid: {e}", {}]
-                    if "model" not in data:
-                        return [gr.update()] * n_inputs + ["Missing model", {}]
+                    err = _validate_finetune_data(data)
+                    if err:
+                        return [gr.update()] * n_inputs + [f"Cannot load: {err}", {}]
                     vid = Path(s).stem
                     data = _clean_utf8(data)
                     return list((vid,) + _extract(data)) + [
@@ -3089,9 +3133,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         vals = remaining
                     if not id_:
                         return "Enter an ID", gr.update(), gr.update()
+                    safe_id = _sanitize_fin_id(id_)
                     data = _build(*vals, extra_data=extra_data)
-                    _write_finetune(id_, data)
-                    settings_path = _write_settings_for_wan2gp(id_, data)
+                    _write_finetune(safe_id, data)
+                    settings_path = _write_settings_for_wan2gp(safe_id, data)
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
                     refresh, target, _ = (
@@ -3099,7 +3144,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if hasattr(self, "load_settings_from_file") and settings_path.exists()
                         else (gr.update(), gr.update(), None)
                     )
-                    return f"Created {id_}", target, gr.update()
+                    return f"Created {safe_id}", target, gr.update()
 
                 fin_create.click(
                     fn=_create_action,
@@ -3141,10 +3186,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         vals = remaining
                     if not id_:
                         return "Enter an ID"
-                    _write_finetune(id_, _build(*vals, extra_data=extra_data))
+                    safe_id = _sanitize_fin_id(id_)
+                    _write_finetune(safe_id, _build(*vals, extra_data=extra_data))
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
-                    return f"Saved {id_}"
+                    return f"Saved {safe_id}"
 
                 fin_save.click(
                     fn=_save_action,
@@ -3172,16 +3218,26 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     bare_warnings = _check_bare_filenames(data)
                     if bare_warnings:
                         return "⚠️ Cannot save & upload:\n" + "\n".join(bare_warnings)
+                    safe_id = _sanitize_fin_id(id_)
                     _stamp_hf_username(data)
-                    _write_finetune(id_, data)
+                    _write_finetune(safe_id, data)
+                    token_urls = _find_token_urls(data)
+                    if token_urls:
+                        keys = sorted({entry.split(":", 1)[0] for entry in token_urls})
+                        return (
+                            f"Saved locally as '{safe_id}', but upload was blocked: "
+                            f"{len(token_urls)} URL(s) in {', '.join(keys)} embed your "
+                            "CivitAI API token (`token=`). Uploading would publish the key. "
+                            "Replace those URLs with non-token download links first."
+                        )
                     try:
-                        _hf_upload(id_, data)
+                        _hf_upload(safe_id, data)
                         if (
                             hasattr(self, "refresh_model_defs")
                             and self.refresh_model_defs
                         ):
                             self.refresh_model_defs()
-                        return f"Saved & uploaded {id_}"
+                        return f"Saved & uploaded {safe_id}"
                     except Exception as e:
                         return f"Saved but upload failed: {e}"
 
@@ -3225,14 +3281,18 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 def _delete_action(id_):
                     if not id_:
-                        return "Enter an ID"
+                        return "Enter an ID", {}
                     p = _resolve_finetune_path(id_)
                     if not p or not p.exists():
-                        return "Not found"
+                        return "Not found", {}
                     p.unlink()
+                    try:
+                        _settings_path_for(id_).unlink(missing_ok=True)
+                    except OSError:
+                        pass
                     if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                         self.refresh_model_defs()
-                    return f"Deleted {id_}"
+                    return f"Deleted {id_}", {}
 
                 fin_del.click(
                     fn=lambda: (gr.update(visible=False), gr.update(visible=True)),
@@ -3245,7 +3305,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     queue=False,
                 )
                 fin_del_confirm_btn.click(
-                    fn=_delete_action, inputs=[fin_id], outputs=[fin_status]
+                    fn=_delete_action,
+                    inputs=[fin_id],
+                    outputs=[fin_status, fin_extra_data],
                 ).then(
                     fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
                     outputs=[fin_del, fin_del_confirm],
@@ -3259,6 +3321,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         blanks
                         + [gr.update(value="")]
                         + [gr.update(visible=True), gr.update(visible=False)]
+                        + [{}]
                     )
 
                 fin_cancel_create.click(
@@ -3267,6 +3330,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         ALL_INPUTS
                         + [fin_status]
                         + [fin_creator_actions, fin_editor_actions]
+                        + [fin_extra_data]
                     ),
                     queue=False,
                 ).then(
@@ -3287,6 +3351,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         ALL_INPUTS
                         + [fin_status]
                         + [fin_creator_actions, fin_editor_actions]
+                        + [fin_extra_data]
                     ),
                     queue=False,
                 ).then(
@@ -3508,6 +3573,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 with gr.Row():
                     l_imp_file = gr.File(label="Import .json", file_types=[".json"])
                     l_imp_btn = gr.Button("Import")
+                l_export_btn = gr.DownloadButton("Export JSON", value=None)
                 l_status = gr.Textbox(label="Status")
 
             # ── CIVITAI ──
@@ -3553,6 +3619,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     )
                     ci_search_btn = gr.Button("Search", variant="primary", scale=1)
                 with gr.Row():
+                    ci_pick = gr.Dropdown(
+                        label="Result version",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        scale=3,
+                        container=False,
+                    )
                     ci_load_btn = gr.Button(
                         "Fill Selected into Create/Edit", variant="primary", scale=1
                     )
@@ -3561,9 +3635,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 ci_results = gr.HTML(
                     "<div style='color:#9ca3af;text-align:center;"
                     "padding:32px'>Click Search</div>"
-                )
-                ci_selected = gr.Textbox(
-                    visible=False, elem_id="civitai-selected", value="{}"
                 )
 
                 def _ci_refresh_filters(mtype, base):
@@ -3591,11 +3662,13 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "text-align:center;padding:32px'>"
                             "Enter a search term or pick a Type / Base Model</div>",
                             "",
+                            gr.update(choices=[], value=None),
                         ) + tuple(enum_updates)
                     data = _civitai_search(
                         query, model_type=mtype, base_model=base, nsfw=bool(nsfw), site=site
                     )
-                    html_out = _civitai_render_results(data, site)
+                    html_out = _civitai_render_results(data)
+                    options = _civitai_result_options(data, site)
                     count = len(data.get("items", [])) if "error" not in data else 0
                     label = f"'{html.escape(query)}'" if query else "most downloaded"
                     status = (
@@ -3607,17 +3680,21 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     )
                     if count and (site != "civitai.com" or nsfw):
                         status += f" · {site}" + (" · NSFW included" if nsfw else "")
-                    return (html_out, status) + tuple(enum_updates)
+                    return (
+                        html_out,
+                        status,
+                        gr.update(choices=options, value=None),
+                    ) + tuple(enum_updates)
 
                 ci_search_btn.click(
                     fn=_ci_do_search,
                     inputs=[ci_search, ci_type, ci_base, ci_nsfw, ci_site],
-                    outputs=[ci_results, ci_status, ci_type, ci_base],
+                    outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
                 )
                 ci_search.submit(
                     fn=_ci_do_search,
                     inputs=[ci_search, ci_type, ci_base, ci_nsfw, ci_site],
-                    outputs=[ci_results, ci_status, ci_type, ci_base],
+                    outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
                 )
 
                 def _ci_fill(civitai_json_str):
@@ -3625,7 +3702,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 ci_load_btn.click(
                     fn=_ci_fill,
-                    inputs=[ci_selected],
+                    inputs=[ci_pick],
                     outputs=ALL_INPUTS[1:] + [ci_status],
                 ).then(
                     fn=_sync_refs_from_loaded,
@@ -3644,12 +3721,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return (
                         "<div style='color:#9ca3af;text-align:center;"
                         "padding:32px'>Click Search</div>",
-                        "{}",
+                        gr.update(choices=[], value=None),
                         "Enter a search term to find models on CivitAI",
                     )
 
                 ci_clear_btn.click(
-                    fn=_ci_clear, outputs=[ci_results, ci_selected, ci_status]
+                    fn=_ci_clear, outputs=[ci_results, ci_pick, ci_status]
                 )
 
             # ── SHARED LOCAL HANDLERS ──
@@ -3769,6 +3846,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     p.unlink()
                 else:
                     return "Not found"
+                try:
+                    _settings_path_for(fid).unlink(missing_ok=True)
+                except OSError:
+                    pass
                 DISK_EXISTS_CACHE.clear()
                 if hasattr(self, "refresh_model_defs") and self.refresh_model_defs:
                     self.refresh_model_defs()
@@ -3793,8 +3874,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 outputs=[l_del, l_del_confirm],
                 queue=False,
             )
-
-            l_export_btn = gr.DownloadButton("Export JSON", value=None)
 
             def _loc_export_detail(fid):
                 if not fid:
@@ -3850,14 +3929,20 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 except Exception as e:
                     cards_html, _ = _fmt_local_cards()
                     return f"Invalid: {e}", gr.update(), gr.update(), cards_html
-                if "model" not in data:
+                err = _validate_finetune_data(data)
+                if err:
                     cards_html, _ = _fmt_local_cards()
-                    return ("Missing 'model'", gr.update(), gr.update(), cards_html)
-                fid = Path(s).stem
-                existing_path = Path(FINETUNES_DIR) / f"{fid}.json"
-                overwrite_note = (
-                    " (overwrote existing)" if existing_path.exists() else ""
-                )
+                    return (f"Cannot import: {err}", gr.update(), gr.update(), cards_html)
+                fid = _sanitize_fin_id(Path(s).stem)
+                existing = _resolve_finetune_path(fid)
+                if existing and existing.exists():
+                    cards_html, _ = _fmt_local_cards()
+                    return (
+                        f"'{fid}' already exists — delete it first or rename the file",
+                        gr.update(),
+                        gr.update(),
+                        cards_html,
+                    )
                 _write_finetune(fid, data)
                 # Build a Wan2GP-compatible settings file and delegate to
                 # Wan2GP's built-in load_settings_from_file for model switching.
@@ -3869,7 +3954,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 )
                 target = _ensure_model_choice_target(target, fid)
                 cards_html, _ = _fmt_local_cards()
-                return f"Imported '{fid}'{overwrite_note}", target, gr.update(), cards_html
+                return f"Imported '{fid}'", target, gr.update(), cards_html
 
             l_imp_btn.click(
                 fn=_loc_import,
@@ -3893,7 +3978,20 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return "Not found"
-                data = json.loads(p.read_text(encoding="utf-8"))
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except Exception as e:
+                    return f"Cannot upload: invalid JSON ({e})"
+                err = _validate_finetune_data(data)
+                if err:
+                    return f"Cannot upload: {err}"
+                token_urls = _find_token_urls(data)
+                if token_urls:
+                    return (
+                        f"Cannot upload '{fid}': {len(token_urls)} URL(s) embed your "
+                        "CivitAI API token (`token=`). Remove the token before uploading "
+                        "or it will be published with the finetune."
+                    )
                 _stamp_hf_username(data)
                 _hf_upload(fid, data)
                 return f"Uploaded '{fid}'"

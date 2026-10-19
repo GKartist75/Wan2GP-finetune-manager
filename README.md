@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.6.6 🧪
+# Wan2GP Finetune Manager Plugin v3.6.7 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.6.6** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.6.7** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Features
 
@@ -15,7 +15,7 @@ Community finetune registry plugin for Wan2GP. Browse, load, create, improve, an
 | **Browse** | Refresh registry, search by name/description/author/ID, filter by architecture or tag, click cards for JSON details, validate URLs, download locally, improve/create variant |
 | **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
 | **Local** | Visual card browser, load & switch, delete, export, import .json with preview, upload to registry |
-| **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, one-click URL fill (routes to LoRA or main checkpoint automatically) |
+| **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, pick a version from the result dropdown, then fill its URL (routes to LoRA or main checkpoint automatically) |
 
 ## Install
 
@@ -109,11 +109,19 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
-├── plugin_info.json     # Plugin metadata v3.6.6
+├── plugin_info.json     # Plugin metadata v3.6.7
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
 └── .gitignore
 ```
+
+## What's New in v3.6.7
+
+- **Editor round-trips are lossless again** — clearing a URL, LoRA, custom resolution, solver, or prompt field now removes it from the saved finetune; custom `model.resolutions` are no longer replaced by the top-level default resolution.
+- **Model references stay scalar** — `URLs`, `URLs2`, `text_encoder_URLs`, `VAE_URLs`, `preload_URLs`, and `loras` keep the single-string model-id form Wan2GP resolves. LoRA step syntax such as `1,1.1;0` is preserved, and the top-level `activated_loras` copy stays in sync with `model.loras`.
+- **CivitAI fixes** — DoRA/LoCon results now fill the LoRA field, and the version picker uses a real dropdown plus **Fill Selected**; the old per-card "Use" buttons depended on scripts that Gradio does not execute.
+- **Safer file and upload handling** — uploads refuse URLs containing a CivitAI `token=` (so the API key is never published); registry downloads, variants, and local uploads are schema-validated; imports no longer silently overwrite; Delete also removes the matching settings file.
+- **UI fixes** — the Architecture filter is populated from the registry (and accepts custom values), the Local **Export JSON** button is inside the Local tab, and card selection is escaped correctly.
 
 ## What's New in v3.6.6
 
