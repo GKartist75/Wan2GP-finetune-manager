@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.6.8 (2026-10-20)
+
+### Fixed
+- **Plugin failed to load — `No module named 'Wan2GP-finetune-manager.plugin'`** — `plugin.py`, `plugin_info.json`, `README.md`, `CHANGELOG.md` and `user-guide.html` had been deleted from the working tree. With `plugin_info.json` gone, Wan2GP's plugin discovery fell back to `importlib.import_module("<folder>.plugin")`, and with `plugin.py` also gone only a stale `__pycache__/plugin.cpython-*.pyc` was left, so metadata loading failed and the warning was printed for every plugin scan. All five files are restored from git and the plugin registers again (`PluginManager.get_plugins_info()` returns v3.6.8).
+
+### Changed
+- Bumped version to 3.6.8 (plugin.py + plugin_info.json).
+- README: new Troubleshooting section for that warning — the three required files (`plugin.py`, `plugin_info.json`, `__init__.py`), why a `.pyc` cannot replace the source, and the `git restore` + `__pycache__` cleanup that recovers a partial checkout.
+- No functional changes to the plugin itself.
+
 ## v3.6.7 (2026-10-19)
 
 ### Fixed

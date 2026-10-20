@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.6.7 🧪
+# Wan2GP Finetune Manager Plugin v3.6.8 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.6.7** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.6.8** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Features
 
@@ -109,11 +109,41 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
-├── plugin_info.json     # Plugin metadata v3.6.7
+├── plugin_info.json     # Plugin metadata v3.6.8
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
 └── .gitignore
 ```
+
+## Troubleshooting
+
+### `Could not load metadata for plugin Wan2GP-finetune-manager: No module named 'Wan2GP-finetune-manager.plugin'`
+
+Wan2GP reads `plugin_info.json` from the plugin folder first and otherwise imports `<plugin folder>.plugin` (`shared/utils/plugins.py`). This message means one of the required files is missing from the folder Wan2GP scans — a partial clone or copy, or a `__pycache__` left behind after the source file was deleted. It is printed once per plugin scan, so it repeats on every startup.
+
+Check that `<Wan2GP>/plugins/Wan2GP-finetune-manager` contains all three:
+
+```
+plugin.py           # required — the plugin entry point
+plugin_info.json    # required — metadata (name, version, type)
+__init__.py         # required — makes the folder a package (may be empty)
+```
+
+Recover a git checkout, then clear the stale bytecode and restart Wan2GP:
+
+```powershell
+cd <Wan2GP>/plugins/Wan2GP-finetune-manager
+git restore --source=HEAD -- plugin.py plugin_info.json __init__.py
+Remove-Item -Recurse -Force .\__pycache__
+```
+
+A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v3.6.8
+
+- **Complete plugin files restored** — `plugin.py`, `plugin_info.json`, `README.md`, `CHANGELOG.md` and `user-guide.html` had gone missing from the working tree, which made Wan2GP print `Could not load metadata for plugin Wan2GP-finetune-manager: No module named 'Wan2GP-finetune-manager.plugin'` on every plugin scan. All five files are back and the plugin reports v3.6.8 in the Plugins tab.
+- **Troubleshooting section** — the README now explains that startup message, lists the files the loader needs, and shows how to recover a partial checkout.
+- **No functional changes** — plugin behaviour is identical to v3.6.7.
 
 ## What's New in v3.6.7
 
