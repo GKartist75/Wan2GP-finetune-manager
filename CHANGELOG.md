@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.6.9 (2026-10-21)
+
+### Added
+- **Model-family filtering and grouping (Wan2GP categories)** - finetunes are now categorised with Wan2GP's own family system (LTX-2, MiniMax H3, Wan2.2, Wan2.1, Flux 2, Qwen Image, Krea 2, Z-Image, ...) instead of only by architecture. Browse and Local have a **Model family** dropdown, cards are grouped under family headings with counts, and each card shows its family and architecture badges. The Architecture filter is populated dynamically and is narrowed to the selected family.
+- **Family-aware Create/Edit Architecture dropdown** - choices now come from the running Wan2GP host (`list_model_defs`) and are labelled with the family, e.g. `LTX-2 - ltx2_22B`, so the base type and its category are visible while editing.
+- **Family-aware HF registry page** - the static Space at huggingface.co/spaces/GKartist75/wan2gp-finetunes now groups cards by family, has a **Model family** filter, narrows Architecture choices to that family, and shows family/architecture badges. A generated `families.json` (families + architecture map) is published alongside the page and refreshed whenever a finetune is uploaded.
+
+### Changed
+- Family resolution mirrors Wan2GP: a valid `model.group` wins, then the family handler registered for `model.architecture`, then a conservative prefix fallback. Unknown types are shown under **Unknown** rather than being mislabelled.
+- A finetune whose name clearly points at another family (for example a Z-Image name with `architecture: "t2v"`) gets a `looks like Z-Image` warning badge; the JSON itself is not rewritten.
+- Bumped version to 3.6.9 (plugin.py + plugin_info.json).
+
 ## v3.6.8 (2026-10-20)
 
 ### Fixed

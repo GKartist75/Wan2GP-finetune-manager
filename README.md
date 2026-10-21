@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.6.8 🧪
+# Wan2GP Finetune Manager Plugin v3.6.9 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,15 +6,15 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.6.8** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.6.9** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Features
 
 | Tab | Functionality |
 |---|---|
-| **Browse** | Refresh registry, search by name/description/author/ID, filter by architecture or tag, click cards for JSON details, validate URLs, download locally, improve/create variant |
-| **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
-| **Local** | Visual card browser, load & switch, delete, export, import .json with preview, upload to registry |
+| **Browse** | Refresh registry, search by name/description/author/ID, filter by **model family**, architecture or tag, cards grouped under family headings, click cards for JSON details, validate URLs, download locally, improve/create variant |
+| **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. Architecture choices come from the running Wan2GP host and are labelled by family. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
+| **Local** | Visual card browser grouped by family, search and family/architecture filters, load & switch, delete, export, import .json with preview, upload to registry |
 | **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, pick a version from the result dropdown, then fill its URL (routes to LoRA or main checkpoint automatically) |
 
 ## Install
@@ -101,6 +101,8 @@ The plugin automatically detects your access level:
 4. The Space owner reviews your submission and merges it
 5. Once merged, your finetune appears in everyone's Browse tab
 
+When the upload is committed directly (Space owner), the plugin also refreshes `families.json`, the generated family catalogue used by the static registry page to group cards by Wan2GP model family.
+
 ## Files
 
 ```
@@ -109,9 +111,12 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # All plugin logic (4 tabs)
-├── plugin_info.json     # Plugin metadata v3.6.8
+├── plugin_info.json     # Plugin metadata v3.6.9
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
+├── hf_space/            # Static HF registry page (uploaded to the Space)
+│   ├── index.html       # Family-aware registry browser
+│   └── families.json    # Generated family catalogue + architecture map
 └── .gitignore
 ```
 
@@ -138,6 +143,13 @@ Remove-Item -Recurse -Force .\__pycache__
 ```
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v3.6.9
+
+- **Model-family browsing** — finetunes are now categorised with Wan2GP's own family system (LTX-2, MiniMax H3, Wan2.2, Wan2.1, Flux 2, Qwen Image, Krea 2, ...). Browse and Local have a **Model family** filter, cards are grouped under family headings with counts, and every card shows its family and architecture. The Architecture filter narrows to the selected family.
+- **Family-aware editing** — the Create/Edit Architecture dropdown is filled from the running Wan2GP host and labelled like `LTX-2 - ltx2_22B`, so you can see both the base type and its family.
+- **Family-aware registry page** — the HF Space registry now groups cards by family and filters the architecture list to the chosen family. `families.json` is generated from the host and refreshed on every upload.
+- **Mismatch warnings** — a finetune whose name points at another family (for example a Z-Image name saved with `architecture: "t2v"`) gets a `looks like Z-Image` badge; the file is never rewritten silently.
 
 ## What's New in v3.6.8
 

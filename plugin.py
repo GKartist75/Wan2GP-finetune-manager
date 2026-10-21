@@ -116,7 +116,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.6.8"
+PLUGIN_VERSION = "3.6.9"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -264,6 +264,323 @@ def _get_cached_registry(force: bool = False) -> list[dict]:
     _REGISTRY_CACHE_TIME = now
     return fins
 
+# ═══════════════════════════════════════════════════════════════════
+# Model families — the UI categories Wan2GP itself uses (LTX-2, MiniMax H3,
+# Wan2.2, ...). A finetune's `model.architecture` is a *base model type*;
+# its family is resolved by the matching Wan2GP family handler. An explicit
+# `model.group` overrides the family, but only when it is a real family key.
+# ═══════════════════════════════════════════════════════════════════
+
+# Fallback catalogue (order, label) mirroring the host's query_family_infos()
+# calls. The live host catalogue is preferred; this keeps the plugin usable
+# when a host version does not expose `families_infos`.
+_FAMILY_FALLBACK = {
+    "wan": (0, "Wan2.1"),
+    "wan2_2": (1, "Wan2.2"),
+    "hunyuan": (20, "Hunyuan Video"),
+    "hunyuan_1_5": (21, "Hunyuan Video 1.5"),
+    "ltxv": (30, "LTX Video"),
+    "ltx2": (40, "LTX-2"),
+    "kandinsky5": (50, "Kandinsky 5"),
+    "kandinsky6": (51, "Kandinsky 6"),
+    "longcat": (60, "LongCat"),
+    "magi_human": (62, "Magi Human"),
+    "minimax_h3": (70, "MiniMax H3"),
+    "flux": (1100, "Flux 1"),
+    "flux2": (1101, "Flux 2"),
+    "flux3": (1102, "Flux 3"),
+    "qwen": (1110, "Qwen Image"),
+    "qwen_image_2": (1111, "Qwen Image 2.1"),
+    "z_image": (1120, "Z-Image"),
+    "hidream": (1130, "HiDream"),
+    "ideogram4": (1140, "Ideogram"),
+    "krea2": (1150, "Krea 2"),
+    "ming_image": (1160, "Ming Image 0.1"),
+    "moss_image": (1161, "MOSS Image"),
+    "sensenova": (1170, "SenseNova"),
+    "hunyuan3d": (1300, "Hunyuan3D"),
+    "music": (2195, "Music"),
+    "tts": (2200, "TTS"),
+    "trellis2": (3020, "TRELLIS.2"),
+    "triposg": (3030, "TripoSG"),
+    "triposplat": (3030, "TripoSplat"),
+    "recon3d": (3030, "3D Reconstruction"),
+    "animate_any_mesh": (3040, "AnimateAnyMesh"),
+    "worldmirror": (3040, "WorldMirror"),
+}
+
+# Architecture prefix → family, used only when the host cannot resolve a type
+# (older hosts, or registry entries for models that are not installed).
+_FAMILY_PREFIX_FALLBACK = (
+    ("minimax_h3", "minimax_h3"),
+    ("ltx2", "ltx2"),
+    ("ltxv", "ltxv"),
+    ("hunyuan3d", "hunyuan3d"),
+    ("hunyuan_1_5", "hunyuan_1_5"),
+    ("hunyuan", "hunyuan"),
+    ("kandinsky6", "kandinsky6"),
+    ("kandinsky5", "kandinsky5"),
+    ("k5_", "kandinsky5"),
+    ("k6_", "kandinsky6"),
+    ("longcat", "longcat"),
+    ("magi", "magi_human"),
+    ("flux3", "flux3"),
+    ("flux2", "flux2"),
+    ("flux", "flux"),
+    ("qwen_image_2", "qwen_image_2"),
+    ("qwen", "qwen"),
+    ("z_image", "z_image"),
+    ("hidream", "hidream"),
+    ("ideogram", "ideogram4"),
+    ("krea2", "krea2"),
+    ("ming_image", "ming_image"),
+    ("moss_image", "moss_image"),
+    ("sensenova", "sensenova"),
+    ("trellis", "trellis2"),
+    ("triposplat", "triposplat"),
+    ("triposg", "triposg"),
+    ("animate_any_mesh", "animate_any_mesh"),
+    ("worldmirror", "worldmirror"),
+    ("da3", "recon3d"),
+    ("moge", "recon3d"),
+    ("mapanything", "recon3d"),
+    ("ace_step", "music"),
+    ("stable_audio", "music"),
+    ("yue2", "music"),
+    ("heartmula", "music"),
+    ("minimax_music", "music"),
+    ("chatterbox", "tts"),
+    ("qwen3_tts", "tts"),
+    ("index_tts", "tts"),
+    ("kugelaudio", "tts"),
+    ("omnivoice", "tts"),
+    ("auk", "tts"),
+    ("fish_", "tts"),
+    ("moss_tts", "tts"),
+    ("scenema_audio", "tts"),
+    ("dramabox_audio", "tts"),
+    ("wan", "wan"),
+)
+
+# Distinctive name/URL tokens used only to flag a suspicious architecture.
+_FAMILY_TEXT_HINTS = (
+    ("z-image", "z_image"),
+    ("z_image", "z_image"),
+    ("minimax", "minimax_h3"),
+    ("ltx", "ltx2"),
+    ("hunyuan", "hunyuan"),
+    ("kandinsky", "kandinsky5"),
+    ("longcat", "longcat"),
+    ("magi", "magi_human"),
+    ("flux", "flux"),
+    ("qwen", "qwen"),
+    ("krea", "krea2"),
+    ("ideogram", "ideogram4"),
+    ("hidream", "hidream"),
+    ("sensenova", "sensenova"),
+    ("ming_image", "ming_image"),
+    ("moss_image", "moss_image"),
+    ("trellis", "trellis2"),
+    ("tripo", "triposg"),
+)
+
+_FAMILY_UNKNOWN = "unknown"
+
+
+def _family_catalog(plugin=None) -> dict[str, tuple[int, str]]:
+    """Return {family_key: (order, label)} from the host when available."""
+    catalog: dict[str, tuple[int, str]] = {}
+    infos = getattr(plugin, "families_infos", None) if plugin is not None else None
+    if isinstance(infos, dict):
+        for key, value in infos.items():
+            if not key or key == _FAMILY_UNKNOWN:
+                continue
+            if isinstance(value, (list, tuple)) and len(value) >= 2:
+                try:
+                    order = int(value[0])
+                except (TypeError, ValueError):
+                    order = 9999
+                catalog[str(key)] = (order, str(value[1]))
+    return catalog or dict(_FAMILY_FALLBACK)
+
+
+def _family_label(catalog: dict, key: str) -> str:
+    if key in catalog:
+        return catalog[key][1]
+    if key == _FAMILY_UNKNOWN or not key:
+        return "Unknown"
+    return str(key)
+
+
+def _family_choices(catalog: dict, keys=None) -> list[tuple[str, str]]:
+    """Ordered (label, key) pairs, optionally limited to the given keys."""
+    if keys is not None:
+        keys = {key for key in keys if key in catalog}
+    else:
+        keys = set(catalog)
+    ordered = sorted(
+        keys, key=lambda key: (catalog[key][0], catalog[key][1].casefold())
+    )
+    return [(catalog[key][1], key) for key in ordered]
+
+
+def _family_for_model(plugin, model) -> str:
+    """Resolve a finetune/model dict to a Wan2GP family key.
+
+    Mirrors Wan2GP: a valid explicit `group` wins, then the family handler
+    registered for `architecture`, then a conservative prefix fallback."""
+    m = model if isinstance(model, dict) else {}
+    catalog = _family_catalog(plugin)
+    group = str(m.get("group", "") or "").strip()
+    if group in catalog:
+        return group
+    arch = str(m.get("architecture", "") or "").strip()
+    if not arch:
+        return _FAMILY_UNKNOWN
+    getter = getattr(plugin, "get_model_family", None) if plugin is not None else None
+    if callable(getter):
+        try:
+            family = getter(arch, for_ui=True)
+        except TypeError:
+            try:
+                family = getter(arch)
+            except Exception:
+                family = None
+        except Exception:
+            family = None
+        if family in catalog:
+            return family
+    low = arch.casefold()
+    for prefix, family in _FAMILY_PREFIX_FALLBACK:
+        if low.startswith(prefix) and family in catalog:
+            return family
+    return _FAMILY_UNKNOWN
+
+
+def _family_text_hint(model) -> str:
+    """Guess the family from the model name/URLs (used for warnings only)."""
+    m = model if isinstance(model, dict) else {}
+    parts = [str(m.get("name", "") or ""), str(m.get("finetune_source_model", "") or "")]
+    urls = m.get("URLs", [])
+    if isinstance(urls, str):
+        urls = [urls]
+    if isinstance(urls, list):
+        parts.extend(str(u) for u in urls if isinstance(u, str))
+    haystack = " ".join(parts).casefold()
+    for token, family in _FAMILY_TEXT_HINTS:
+        if token in haystack:
+            return family
+    return ""
+
+
+def _family_warning(plugin, model, family: str) -> str:
+    """Return a family label when the model name clearly contradicts the
+    architecture-derived family, else an empty string."""
+    hint = _family_text_hint(model)
+    catalog = _family_catalog(plugin)
+    if not hint or hint not in catalog or hint == family:
+        return ""
+    # Only flag against the generic Wan families or an unresolved type;
+    # a Wan2.2 finetune mentioning "wan" in its name is not a mismatch.
+    if family in ("wan", "wan2_2", _FAMILY_UNKNOWN):
+        return catalog[hint][1]
+    return ""
+
+
+def _family_sort_key(catalog: dict, family: str, label: str):
+    order, fam_label = catalog.get(family, (9999, str(family or "Unknown")))
+    return (order, fam_label.casefold(), str(label or "").casefold())
+
+
+def _architecture_choices(plugin) -> list[tuple[str, str]]:
+    """(label, model_type) choices for the Create/Edit Architecture dropdown.
+
+    Uses Wan2GP's own base-model definitions so the list always matches the
+    running host, with the family label as a prefix (e.g. "LTX-2 · ltx2_22B").
+    """
+    catalog = _family_catalog(plugin)
+    lister = getattr(plugin, "list_model_defs", None) if plugin is not None else None
+    records = []
+    if callable(lister):
+        try:
+            records = lister(finetune=False) or []
+        except TypeError:
+            try:
+                records = lister() or []
+            except Exception:
+                records = []
+        except Exception:
+            records = []
+    rows = []
+    seen = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        model_type = str(record.get("model_type") or "").strip()
+        if not model_type or model_type in seen:
+            continue
+        seen.add(model_type)
+        metadata = record.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        if metadata.get("finetune"):
+            continue
+        family = metadata.get("family") or _family_for_model(plugin, record)
+        rows.append((family, model_type))
+    if not rows:
+        # Older hosts: fall back to the files Wan2GP would load.
+        rows = [
+            (_family_for_model(plugin, {"architecture": mid}), mid)
+            for mid, _label in _list_available_models()
+        ]
+    rows.sort(
+        key=lambda row: (
+            _family_sort_key(catalog, row[0], ""),
+            row[1].casefold(),
+        )
+    )
+    return [
+        (f"{_family_label(catalog, family)} \u00b7 {model_type}", model_type)
+        for family, model_type in rows
+    ]
+
+
+def _family_payload(plugin=None) -> dict:
+    """Build the families.json payload served by the static HF Space page."""
+    catalog = _family_catalog(plugin)
+    families = {
+        key: {"order": int(order), "label": str(label)}
+        for key, (order, label) in catalog.items()
+    }
+    architectures = {}
+    lister = getattr(plugin, "list_model_defs", None) if plugin is not None else None
+    if callable(lister):
+        try:
+            records = lister(finetune=False) or []
+        except TypeError:
+            try:
+                records = lister() or []
+            except Exception:
+                records = []
+        except Exception:
+            records = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            if metadata.get("finetune"):
+                continue
+            model_type = str(record.get("model_type") or "").strip()
+            family = str(metadata.get("family") or "").strip()
+            if model_type and family in families:
+                architectures[model_type] = family
+    return {
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "families": families,
+        "architectures": architectures,
+    }
+
+
 def _collect_url_entries(detail: dict) -> list[str]:
     """Collect all URL/LoRA/path entries from a finetune model dict for validation.
     Handles string/list fields and adds architecture as a model ref prefix."""
@@ -287,7 +604,8 @@ def _fmt_card_html_item(
     fid: str, name: str, arch: str, author: str, desc: str,
     urls: list[str], loras: list[str], ftags: list | str,
     is_selected: bool, sel_elem_id: str = "fm-selected",
-    is_variant: bool = False,
+    is_variant: bool = False, family_label: str = "",
+    family_warning: str = "",
 ) -> str:
     """Build a single finetune card HTML fragment.
     Used by both the Browse and Local tab card builders."""
@@ -296,7 +614,24 @@ def _fmt_card_html_item(
     safe_arch = html.escape(arch or "")
     safe_author = html.escape(author or "")
     safe_desc = html.escape((desc or "")[:300])
-    tag = "Variant" if is_variant else safe_arch
+    safe_family = html.escape(family_label or "")
+    badge_parts = []
+    if safe_family:
+        badge_parts.append(f"<span class='fm-badge'>{safe_family}</span>")
+    if safe_arch:
+        badge_parts.append(
+            f"<span class='fm-badge fm-badge-secondary'>{safe_arch}</span>"
+        )
+    if not badge_parts:
+        badge_parts.append("<span class='fm-badge fm-badge-secondary'>Unknown</span>")
+    if is_variant:
+        badge_parts.append("<span class='fm-badge fm-badge-secondary'>Variant</span>")
+    if family_warning:
+        badge_parts.append(
+            "<span class='fm-badge fm-badge-warn' title='architecture does not "
+            f"match the model name'>&#9888; looks like {html.escape(family_warning)}</span>"
+        )
+    tag = " ".join(badge_parts)
     if isinstance(ftags, str):
         ftags_list = [t.strip() for t in ftags.split(",") if t.strip()]
     elif isinstance(ftags, list):
@@ -362,8 +697,7 @@ def _fmt_card_html_item(
     return (
         f'<div class="fm-card{c}" onclick="{html.escape(onclick, quote=True)}">'
         f"<div class='fm-card-title'>{safe_name}</div>"
-        f"<div class='fm-card-meta'>"
-        f"<span class='fm-badge'>{html.escape(tag)}</span> {safe_author}</div>"
+        f"<div class='fm-card-meta'>{tag} {safe_author}</div>"
         f"<div class='fm-card-desc'>{safe_desc}</div>"
         f"{tags_badges}{files_html}{loras_html}"
         f"</div>"
@@ -1661,7 +1995,27 @@ def _stamp_hf_username(json_data: dict) -> None:
         pass
 
 
-def _hf_upload(fin_id, json_data):
+def _publish_family_index(api, plugin=None) -> None:
+    """Refresh families.json on the HF Space (best effort).
+
+    The static Space page uses it to group finetunes by Wan2GP model family.
+    Failures are ignored: the finetune upload itself must not be affected.
+    """
+    try:
+        payload = _family_payload(plugin)
+        if not payload.get("architectures"):
+            return
+        api.upload_file(
+            path_or_fileobj=json.dumps(payload, indent=2, sort_keys=True).encode(),
+            path_in_repo="families.json",
+            repo_id=REGISTRY_SPACE,
+            repo_type="space",
+        )
+    except Exception:
+        pass
+
+
+def _hf_upload(fin_id, json_data, plugin=None):
     """Upload a finetune JSON to the HF Space.
     Tries direct commit first; falls back to PR for community submissions."""
     from huggingface_hub import HfApi
@@ -1670,6 +2024,7 @@ def _hf_upload(fin_id, json_data):
         api = HfApi(token=REGISTRY_TOKEN)
     safe_id = _sanitize_fin_id(fin_id)
     blob = json.dumps(json_data, indent=2).encode()
+    direct_ok = False
     try:
         # Try direct commit first (works for Space owner)
         api.upload_file(
@@ -1678,6 +2033,7 @@ def _hf_upload(fin_id, json_data):
             repo_id=REGISTRY_SPACE,
             repo_type="space",
         )
+        direct_ok = True
     except Exception:
         # Fallback: create a PR (works for community contributors)
         api.upload_file(
@@ -1687,6 +2043,8 @@ def _hf_upload(fin_id, json_data):
             repo_type="space",
             create_pr=True,
         )
+    if direct_ok:
+        _publish_family_index(api, plugin)
 
 
 def _fetch_registry_json(fin_id):
@@ -1834,6 +2192,12 @@ CARD_CSS = """
 .fm-card-loras { font-size:11px; color:var(--body-text-color-subdued,#6b7280); margin:0; padding-top:4px; display:flex; flex-wrap:wrap; gap:4px; align-items:center }
 .fm-badge { display:inline-block; font-size:10px; padding:2px 8px; border-radius:12px; background:var(--primary-200,#e0e7ff); color:var(--primary-500,#4338ca); margin-right:4px; font-weight:500; letter-spacing:.02em }
 .fm-badge-secondary { background:var(--neutral-100,#f3f4f6); color:var(--neutral-600,#6b7280) }
+.fm-badge-warn { background:color-mix(in srgb,#f59e0b 22%,transparent); color:#f59e0b }
+.fm-family-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:14px 0 6px; padding:0 2px; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--body-text-color-subdued,#6b7280) }
+.fm-family-header:first-child { margin-top:0 }
+.fm-family-header::after { content:""; flex:1; height:1px; background:var(--border-color-primary,#e5e7eb); order:1 }
+.fm-family-header span:first-child { order:0 }
+.fm-family-count { order:2; font-size:10px; font-weight:600; padding:1px 7px; border-radius:10px; background:color-mix(in srgb,#6366f1 18%,transparent); color:#818cf8; letter-spacing:0 }
 /* JSON & Preview readable wrapping */
 [data-testid="json"] .json-holder { max-height:450px !important; overflow-y:auto !important }
 [data-testid="json"] .line .content { white-space:pre-wrap !important; word-break:break-word !important; overflow-wrap:break-word !important; line-height:1.65 !important; font-size:13px !important }
@@ -1851,6 +2215,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
         self.request_global("switch_to_model")
         self.request_global("load_settings_from_file")
         self.request_global("_model_choice_target_value")
+        # Wan2GP's own model-family metadata (LTX-2, MiniMax H3, Wan2.2, ...).
+        # All are optional: _family_catalog() falls back to a static catalogue.
+        self.request_global("families_infos")
+        self.request_global("get_model_family")
+        self.request_global("list_model_defs")
         self.request_component("state")
         self.request_component("model_choice_target")
         self.request_component("main_tabs")
@@ -1878,18 +2247,19 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             with gr.TabItem("Browse", id="browse"):
                 with gr.Row():
                     b_search = gr.Textbox(label="Search", scale=3, container=False)
+                    b_family = gr.Dropdown(
+                        label="Model family",
+                        choices=[("All families", "All")],
+                        value="All",
+                        filterable=True,
+                        scale=1,
+                    )
                     b_arch = gr.Dropdown(
                         label="Architecture",
-                        choices=[
-                            "All",
-                            "t2v",
-                            "i2v",
-                            "vace_14B",
-                            "hunyuan",
-                            "hunyuan_i2v",
-                        ],
+                        choices=["All"],
                         value="All",
                         allow_custom_value=True,
+                        filterable=True,
                         scale=1,
                     )
                     b_tag_filter = gr.Dropdown(
@@ -1918,7 +2288,34 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     b_improve = gr.Button("Improve / Create Variant", variant="primary")
                 b_status = gr.Textbox(label="Status")
 
-                def _fmt_cards(fins, search, arch, sel, tag_filter):
+                def _enrich_registry(fins):
+                    """Attach family key/label/warning to registry entries."""
+                    catalog = _family_catalog(self)
+                    for f in fins:
+                        raw = f.get("raw")
+                        m = raw.get("model", {}) if isinstance(raw, dict) else {}
+                        if not isinstance(m, dict) or not m:
+                            m = {
+                                "architecture": f.get("architecture", ""),
+                                "group": f.get("group", ""),
+                                "name": f.get("name", ""),
+                            }
+                        family = _family_for_model(self, m)
+                        f["family"] = family
+                        f["family_label"] = _family_label(catalog, family)
+                        f["family_warning"] = _family_warning(self, m, family)
+                    return fins
+
+                def _archs_for(fins, family):
+                    archs = sorted({
+                        str(f.get("architecture", "")).strip()
+                        for f in fins
+                        if str(f.get("architecture", "")).strip()
+                        and (family in ("", "All") or f.get("family") == family)
+                    })
+                    return ["All"] + archs
+
+                def _fmt_cards(fins, search, arch, sel, tag_filter, family="All"):
                     ff = list(fins)
                     if search:
                         s = search.lower()
@@ -1939,6 +2336,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             or s in f.get("author", "").lower()
                             or _match_tags(f)
                         ]
+                    if family and family != "All":
+                        ff = [f for f in ff if f.get("family") == family]
                     if arch and arch != "All":
                         ff = [f for f in ff if f.get("architecture") == arch]
                     if tag_filter:
@@ -1962,8 +2361,30 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "padding:32px'>No results</div>",
                             "**0 matches**",
                         )
-                    _h = ['<div class="fm-cards-container">']
+                    catalog = _family_catalog(self)
+                    ff.sort(
+                        key=lambda f: _family_sort_key(
+                            catalog,
+                            f.get("family") or _FAMILY_UNKNOWN,
+                            f.get("name", f.get("id", "")),
+                        )
+                    )
+                    counts = {}
                     for f in ff:
+                        fam = f.get("family") or _FAMILY_UNKNOWN
+                        counts[fam] = counts.get(fam, 0) + 1
+                    _h = ['<div class="fm-cards-container">']
+                    current_family = None
+                    for f in ff:
+                        fam = f.get("family") or _FAMILY_UNKNOWN
+                        if fam != current_family:
+                            _h.append(
+                                '<div class="fm-family-header">'
+                                f"<span>{html.escape(_family_label(catalog, fam))}</span>"
+                                f'<span class="fm-family-count">{counts[fam]}</span>'
+                                "</div>"
+                            )
+                            current_family = fam
                         fid = f.get("id", "")
                         _h.append(
                             _fmt_card_html_item(
@@ -1978,6 +2399,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 is_selected=(fid == sel),
                                 sel_elem_id="fm-selected",
                                 is_variant=bool(f.get("source")),
+                                family_label=_family_label(catalog, fam),
+                                family_warning=f.get("family_warning", ""),
                             )
                         )
                     _h.append("</div>")
@@ -1998,14 +2421,16 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return sorted(seen)
 
                 def _do_refresh():
-                    fins = _get_cached_registry(force=True)
+                    fins = _enrich_registry(_get_cached_registry(force=True))
                     html, cnt = _fmt_cards(fins, "", "All", "", "")
                     tags = _all_tags(fins)
-                    archs = sorted({
-                        str(f.get("architecture", "")).strip()
-                        for f in fins
-                        if str(f.get("architecture", "")).strip()
-                    })
+                    catalog = _family_catalog(self)
+                    present = {f.get("family", _FAMILY_UNKNOWN) for f in fins}
+                    fam_choices = [("All families", "All")] + _family_choices(
+                        catalog, present
+                    )
+                    if _FAMILY_UNKNOWN in present and "unknown" not in catalog:
+                        fam_choices.append(("Unknown", _FAMILY_UNKNOWN))
                     return (
                         fins,
                         "",
@@ -2013,7 +2438,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         cnt,
                         gr.update(choices=tags, value=""),
                         gr.update(value=""),
-                        gr.update(choices=["All"] + archs, value="All"),
+                        gr.update(choices=_archs_for(fins, "All"), value="All"),
+                        gr.update(choices=fam_choices, value="All"),
                     )
 
                 b_refresh.click(
@@ -2026,27 +2452,43 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         b_tag_filter,
                         b_search,
                         b_arch,
+                        b_family,
                     ],
                 )
 
-                def _filter(fins, search, arch, sel, tag_filter):
-                    html, cnt = _fmt_cards(fins, search, arch, sel, tag_filter)
+                def _filter(fins, search, arch, sel, tag_filter, family):
+                    html, cnt = _fmt_cards(fins, search, arch, sel, tag_filter, family)
                     return html, cnt
+
+                def _family_changed(fins, search, sel, tag_filter, family):
+                    html, cnt = _fmt_cards(
+                        fins, search, "All", sel, tag_filter, family
+                    )
+                    return (
+                        html,
+                        cnt,
+                        gr.update(choices=_archs_for(fins, family), value="All"),
+                    )
 
                 b_search.input(
                     fn=_filter,
-                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter],
+                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter, b_family],
                     outputs=[b_cards, b_count],
                 )
                 b_arch.change(
                     fn=_filter,
-                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter],
+                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter, b_family],
                     outputs=[b_cards, b_count],
                 )
                 b_tag_filter.change(
                     fn=_filter,
-                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter],
+                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter, b_family],
                     outputs=[b_cards, b_count],
+                )
+                b_family.change(
+                    fn=_family_changed,
+                    inputs=[registry, b_search, b_sel_id, b_tag_filter, b_family],
+                    outputs=[b_cards, b_count, b_arch],
                 )
 
                 fm_sel_input = gr.Textbox(visible=False, elem_id="fm-selected")
@@ -2218,8 +2660,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     fin_arch = gr.Dropdown(
                         label="Architecture",
                         scale=3,
-                        choices=["t2v", "i2v", "vace_14B", "hunyuan", "hunyuan_i2v"],
+                        choices=_architecture_choices(self),
                         allow_custom_value=True,
+                        filterable=True,
                     )
                 with gr.Row():
                     fin_name = gr.Textbox(label="Name", scale=2)
@@ -3231,7 +3674,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "Replace those URLs with non-token download links first."
                         )
                     try:
-                        _hf_upload(safe_id, data)
+                        _hf_upload(safe_id, data, self)
                         if (
                             hasattr(self, "refresh_model_defs")
                             and self.refresh_model_defs
@@ -3555,7 +3998,29 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
             # ── LOCAL ──
             with gr.TabItem("Local", id="local"):
+                with gr.Row():
+                    l_search = gr.Textbox(
+                        label="Search", scale=3, container=False,
+                        placeholder="Filter by name, description or ID...",
+                    )
+                    l_family = gr.Dropdown(
+                        label="Model family",
+                        choices=[("All families", "All")],
+                        value="All",
+                        filterable=True,
+                        scale=1,
+                    )
+                    l_arch = gr.Dropdown(
+                        label="Architecture",
+                        choices=["All"],
+                        value="All",
+                        allow_custom_value=True,
+                        filterable=True,
+                        scale=1,
+                    )
                 l_refresh = gr.Button("Refresh", variant="primary")
+                l_entries = gr.State([])
+                l_count = gr.Markdown("Click *Refresh* to list local finetunes")
                 l_sel_id = gr.Textbox(visible=False, elem_id="l-selected", value="")
                 l_cards = gr.HTML(
                     "<div style='color:#9ca3af;text-align:center;"
@@ -3739,51 +4204,108 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 data = json.loads(p.read_text(encoding="utf-8"))
                 return _clean_utf8(data)
 
-            def _fmt_local_cards():
+            def _scan_local_entries():
+                """Read every local finetune once and attach its model family."""
                 p = Path(FINETUNES_DIR)
+                entries = []
                 if not p.exists():
-                    return (
-                        "<div style='color:#9ca3af;text-align:center;"
-                        "padding:32px'>No finetunes directory</div>",
-                        "*No finetunes directory*",
-                    )
-                fs = sorted(p.glob("*.json"))
-                if not fs:
-                    return (
-                        "<div style='color:#9ca3af;text-align:center;"
-                        "padding:32px'>No local finetunes</div>",
-                        "**0 local finetunes**",
-                    )
-                _h = ['<div class="fm-cards-container">']
-                for fpath in fs:
+                    return entries
+                catalog = _family_catalog(self)
+                for fpath in sorted(p.glob("*.json")):
                     fid = fpath.stem
                     try:
                         data = json.loads(fpath.read_text(encoding="utf-8"))
                     except Exception as e:
-                        # Surface a broken file as a red warning card instead of
-                        # a silently blank one, so the user knows it needs fixing.
-                        _h.append(
-                            f'<div class="fm-card fm-card--broken">'
-                            f'<div class="fm-card-name" style="color:#f87171">'
-                            f'⚠ {html.escape(fid)}</div>'
-                            f'<div class="fm-card-desc">Corrupt or invalid JSON: '
-                            f'{html.escape(str(e))}</div></div>'
-                        )
+                        entries.append({
+                            "id": fid,
+                            "name": fid,
+                            "broken": f"Corrupt or invalid JSON: {e}",
+                            "family": _FAMILY_UNKNOWN,
+                            "family_label": _family_label(catalog, _FAMILY_UNKNOWN),
+                        })
                         continue
                     err = _validate_finetune_data(data)
                     if err:
+                        entries.append({
+                            "id": fid,
+                            "name": fid,
+                            "broken": err,
+                            "family": _FAMILY_UNKNOWN,
+                            "family_label": _family_label(catalog, _FAMILY_UNKNOWN),
+                        })
+                        continue
+                    m = data.get("model", {})
+                    family = _family_for_model(self, m)
+                    entries.append({
+                        "id": fid,
+                        "name": m.get("name", fid),
+                        "model": m,
+                        "family": family,
+                        "family_label": _family_label(catalog, family),
+                        "family_warning": _family_warning(self, m, family),
+                    })
+                return entries
+
+            def _render_local(entries, search="", family="All", arch="All"):
+                ff = list(entries or [])
+                if search:
+                    s = search.strip().casefold()
+                    ff = [
+                        e for e in ff
+                        if s in str(e.get("name", "")).casefold()
+                        or s in str(e.get("id", "")).casefold()
+                        or s in str((e.get("model") or {}).get("description", "")).casefold()
+                    ]
+                if family and family != "All":
+                    ff = [e for e in ff if e.get("family") == family]
+                if arch and arch != "All":
+                    ff = [
+                        e for e in ff
+                        if str((e.get("model") or {}).get("architecture", "")) == arch
+                    ]
+                if not ff:
+                    return (
+                        "<div style='color:#9ca3af;text-align:center;"
+                        "padding:32px'>No local finetunes match</div>",
+                        "**0 local finetunes**",
+                    )
+                catalog = _family_catalog(self)
+                ff.sort(
+                    key=lambda e: _family_sort_key(
+                        catalog, e.get("family") or _FAMILY_UNKNOWN, e.get("name", "")
+                    )
+                )
+                counts = {}
+                for e in ff:
+                    fam = e.get("family") or _FAMILY_UNKNOWN
+                    counts[fam] = counts.get(fam, 0) + 1
+                _h = ['<div class="fm-cards-container">']
+                current_family = None
+                for e in ff:
+                    fam = e.get("family") or _FAMILY_UNKNOWN
+                    if fam != current_family:
+                        _h.append(
+                            '<div class="fm-family-header">'
+                            f"<span>{html.escape(_family_label(catalog, fam))}</span>"
+                            f'<span class="fm-family-count">{counts[fam]}</span>'
+                            "</div>"
+                        )
+                        current_family = fam
+                    fid = e.get("id", "")
+                    if e.get("broken"):
                         _h.append(
                             f'<div class="fm-card fm-card--broken">'
                             f'<div class="fm-card-name" style="color:#f87171">'
-                            f'⚠ {html.escape(fid)}</div>'
-                            f'<div class="fm-card-desc">{html.escape(err)}</div></div>'
+                            f'&#9888; {html.escape(fid)}</div>'
+                            f'<div class="fm-card-desc">'
+                            f'{html.escape(str(e["broken"]))}</div></div>'
                         )
                         continue
-                    m = data.get("model", {})
+                    m = e.get("model") or {}
                     _h.append(
                         _fmt_card_html_item(
                             fid=fid,
-                            name=m.get("name", fid),
+                            name=e.get("name", fid),
                             arch=m.get("architecture", ""),
                             author=m.get("author", "local"),
                             desc=m.get("description", ""),
@@ -3793,13 +4315,69 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             is_selected=False,
                             sel_elem_id="l-selected",
                             is_variant=bool(m.get("finetune_source_model")),
+                            family_label=e.get("family_label", ""),
+                            family_warning=e.get("family_warning", ""),
                         )
                     )
                 _h.append("</div>")
-                plural = "" if len(fs) == 1 else "s"
-                return ("".join(_h), f"**{len(fs)} local finetune{plural}**")
+                plural = "" if len(ff) == 1 else "s"
+                return ("".join(_h), f"**{len(ff)} local finetune{plural}**")
 
-            l_refresh.click(fn=_fmt_local_cards, outputs=[l_cards, l_status])
+            def _local_family_updates(entries):
+                catalog = _family_catalog(self)
+                present = {e.get("family", _FAMILY_UNKNOWN) for e in entries}
+                choices = [("All families", "All")] + _family_choices(catalog, present)
+                if _FAMILY_UNKNOWN in present and "unknown" not in catalog:
+                    choices.append(("Unknown", _FAMILY_UNKNOWN))
+                archs = sorted({
+                    str((e.get("model") or {}).get("architecture", "")).strip()
+                    for e in entries
+                    if str((e.get("model") or {}).get("architecture", "")).strip()
+                })
+                return (
+                    gr.update(choices=choices, value="All"),
+                    gr.update(choices=["All"] + archs, value="All"),
+                )
+
+            def _refresh_local():
+                entries = _scan_local_entries()
+                html_out, count = _render_local(entries)
+                family_update, arch_update = _local_family_updates(entries)
+                return entries, html_out, count, family_update, arch_update
+
+            def _local_filter(entries, search, family, arch):
+                html_out, count = _render_local(entries, search, family, arch)
+                return html_out, count
+
+            def _local_family_changed(entries, search, family):
+                html_out, count = _render_local(entries, search, family, "All")
+                archs = sorted({
+                    str((e.get("model") or {}).get("architecture", "")).strip()
+                    for e in (entries or [])
+                    if str((e.get("model") or {}).get("architecture", "")).strip()
+                    and (family in ("", "All") or e.get("family") == family)
+                })
+                return html_out, count, gr.update(choices=["All"] + archs, value="All")
+
+            l_refresh.click(
+                fn=_refresh_local,
+                outputs=[l_entries, l_cards, l_count, l_family, l_arch],
+            )
+            l_search.input(
+                fn=_local_filter,
+                inputs=[l_entries, l_search, l_family, l_arch],
+                outputs=[l_cards, l_count],
+            )
+            l_arch.change(
+                fn=_local_filter,
+                inputs=[l_entries, l_search, l_family, l_arch],
+                outputs=[l_cards, l_count],
+            )
+            l_family.change(
+                fn=_local_family_changed,
+                inputs=[l_entries, l_search, l_family],
+                outputs=[l_cards, l_count, l_arch],
+            )
             l_sel_id.input(fn=_loc_detail, inputs=[l_sel_id], outputs=[l_detail])
 
             def _loc_load(state_value, fid):
@@ -3868,7 +4446,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             l_del_confirm_btn.click(
                 fn=_loc_del, inputs=[l_sel_id], outputs=[l_status]
             ).then(
-                fn=_fmt_local_cards, outputs=[l_cards, l_status]
+                fn=_refresh_local,
+                outputs=[l_entries, l_cards, l_count, l_family, l_arch],
             ).then(
                 fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
                 outputs=[l_del, l_del_confirm],
@@ -3913,35 +4492,34 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             )
 
             def _loc_import(state_value, file):
+                def _failed(message):
+                    entries, cards_html, count, fam_u, arch_u = _refresh_local()
+                    return (
+                        message, gr.update(), gr.update(),
+                        entries, cards_html, count, fam_u, arch_u,
+                    )
+
                 if file is None:
-                    cards_html, _ = _fmt_local_cards()
-                    return "Select a .json", gr.update(), gr.update(), cards_html
+                    return _failed("Select a .json")
                 s = (
                     file
                     if isinstance(file, str)
                     else file.get("name") or file.get("path")
                 )
                 if not s or not Path(s).exists():
-                    cards_html, _ = _fmt_local_cards()
-                    return "Not found", gr.update(), gr.update(), cards_html
+                    return _failed("Not found")
                 try:
                     data = json.loads(Path(s).read_text(encoding="utf-8"))
                 except Exception as e:
-                    cards_html, _ = _fmt_local_cards()
-                    return f"Invalid: {e}", gr.update(), gr.update(), cards_html
+                    return _failed(f"Invalid: {e}")
                 err = _validate_finetune_data(data)
                 if err:
-                    cards_html, _ = _fmt_local_cards()
-                    return (f"Cannot import: {err}", gr.update(), gr.update(), cards_html)
+                    return _failed(f"Cannot import: {err}")
                 fid = _sanitize_fin_id(Path(s).stem)
                 existing = _resolve_finetune_path(fid)
                 if existing and existing.exists():
-                    cards_html, _ = _fmt_local_cards()
-                    return (
-                        f"'{fid}' already exists — delete it first or rename the file",
-                        gr.update(),
-                        gr.update(),
-                        cards_html,
+                    return _failed(
+                        f"'{fid}' already exists — delete it first or rename the file"
                     )
                 _write_finetune(fid, data)
                 # Build a Wan2GP-compatible settings file and delegate to
@@ -3953,13 +4531,19 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     else (gr.update(), gr.update(), None)
                 )
                 target = _ensure_model_choice_target(target, fid)
-                cards_html, _ = _fmt_local_cards()
-                return f"Imported '{fid}'", target, gr.update(), cards_html
+                entries, cards_html, count, fam_u, arch_u = _refresh_local()
+                return (
+                    f"Imported '{fid}'", target, gr.update(),
+                    entries, cards_html, count, fam_u, arch_u,
+                )
 
             l_imp_btn.click(
                 fn=_loc_import,
                 inputs=[self.state, l_imp_file],
-                outputs=[l_status, self.model_choice_target, self.main_tabs, l_cards],
+                outputs=[
+                    l_status, self.model_choice_target, self.main_tabs,
+                    l_entries, l_cards, l_count, l_family, l_arch,
+                ],
             )
 
             def _up(fid):
@@ -3993,7 +4577,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         "or it will be published with the finetune."
                     )
                 _stamp_hf_username(data)
-                _hf_upload(fid, data)
+                _hf_upload(fid, data, self)
                 return f"Uploaded '{fid}'"
 
             l_up.click(fn=_up, inputs=[l_sel_id], outputs=[l_status])

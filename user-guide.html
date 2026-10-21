@@ -205,7 +205,12 @@
 
   <div class="feature-card">
     <h3><span>🔎</span> Search &amp; filter <span class="badge browse">browse</span></h3>
-    <p>Type in the search box to find finetunes by name or description. Use the <strong>Architecture</strong> dropdown to show only t2v, i2v, or other model types. Pick a <strong>Tag</strong> to narrow by topic.</p>
+    <p>Type in the search box to find finetunes by name or description. Use the <strong>Model family</strong> dropdown to show only LTX-2, MiniMax H3, Wan2.2, Flux 2, Qwen Image, Krea 2 and the rest of Wan2GP's families. The <strong>Architecture</strong> dropdown narrows to the selected family, and <strong>Tag</strong> narrows by topic.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>🗂️</span> Grouped by model family <span class="badge browse">browse</span></h3>
+    <p>Cards are grouped under family headings with a count, and each card shows its family and architecture badges. A <strong>looks like …</strong> warning appears when the model's name clearly points at a different family than its architecture — the JSON is not changed automatically.</p>
   </div>
 
   <div class="feature-card">
@@ -238,7 +243,7 @@
     <p>Fill in the form with a name, description, model URLs, LoRAs, and all the settings you want. When you're happy, click <strong>Create</strong> to save it locally or <strong>Save &amp; Upload</strong> to share it with the community.</p>
     <ul class="step-list">
       <li>Enter a name (like "My Cinematic Style")</li>
-      <li>Pick an architecture (t2v, i2v, etc.)</li>
+      <li>Pick an architecture — choices are labelled with their family (for example <code>LTX-2 · ltx2_22B</code>)</li>
       <li>Add model URLs and LoRAs</li>
       <li>Tweak settings (steps, guidance, resolution)</li>
       <li>Save locally or upload to the registry</li>
@@ -277,7 +282,12 @@
 
   <div class="feature-card">
     <h3><span>📋</span> See all your local finetunes <span class="badge local">local</span></h3>
-    <p>Click <strong>Refresh</strong> to see every finetune JSON file in your Wan2GP finetunes folder. Each one shows as a card with its name, architecture, and description.</p>
+    <p>Click <strong>Refresh</strong> to see every finetune JSON file in your Wan2GP finetunes folder. Each one shows as a card with its name, family, architecture, and description, grouped under family headings.</p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>🔎</span> Filter locally <span class="badge local">local</span></h3>
+    <p>Use <strong>Search</strong>, <strong>Model family</strong>, and <strong>Architecture</strong> above the Local cards. The Architecture dropdown only lists types that belong to the selected family.</p>
   </div>
 
   <div class="feature-card">

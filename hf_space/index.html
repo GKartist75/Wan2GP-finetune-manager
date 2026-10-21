@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wan2GP Finetune Registry</title>
+  <style>
+    :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --text-muted: #8b949e; --accent: #58a6ff; --green: #238636; --green-hover: #2ea043; --section-title: #79c0ff; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+    .container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { font-size: 1.8rem; margin-bottom: .25rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 1.5rem; }
+    /* Filters */
+    .filters { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.5rem; align-items: center; }
+    .filters input, .filters select {
+      background: #21262d; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); padding: 8px 12px; font-size: .9rem; outline: none;
+    }
+    .filters input { flex: 1; min-width: 200px; }
+    .filters input:focus, .filters select:focus { border-color: var(--accent); }
+    .filters select { cursor: pointer; }
+    .filters label { color: var(--text-muted); font-size: .85rem; }
+    .count { color: var(--text-muted); font-size: .9rem; margin-bottom: 1rem; }
+    /* Cards */
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: .5rem; cursor: pointer; transition: border-color .15s; }
+    .card:hover { border-color: var(--accent); }
+    .card h2 { font-size: 1.15rem; margin-bottom: .25rem; }
+    .card .author { font-size: .85rem; color: var(--text-muted); }
+    .card .desc { margin: .4rem 0; font-size: .9rem; color: var(--text); }
+    .card .meta { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .85rem; color: var(--text-muted); }
+    .card .meta span { background: #21262d; padding: 2px 8px; border-radius: 4px; }
+    .tag { display: inline-block; background: #1f2937; color: var(--accent); font-size: .75rem; padding: 2px 8px; border-radius: 12px; margin: 2px 4px 2px 0; }
+    .btn { display: inline-block; background: var(--green); color: #fff; padding: 6px 16px; border-radius: 6px; text-decoration: none; font-size: .85rem; margin-top: .5rem; }
+    .btn:hover { background: var(--green-hover); }
+    .api-note { font-size: .8rem; color: var(--text-muted); margin-top: 2rem; text-align: center; }
+    .api-note code { background: #21262d; padding: 2px 6px; border-radius: 4px; }
+    .empty { color: var(--text-muted); text-align: center; padding: 2rem; }
+    .error { color: #f85149; text-align: center; padding: 2rem; }
+    .hidden { display: none !important; }
+    /* Model families */
+    .family-header { display: flex; align-items: center; gap: 10px; margin: 1.5rem 0 .6rem; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--section-title); }
+    .family-header:first-child { margin-top: 0; }
+    .family-header::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    .family-count { font-size: .7rem; font-weight: 600; letter-spacing: 0; padding: 1px 8px; border-radius: 10px; background: #1f2937; color: var(--accent); }
+    .family-badge { background: #1f2937; color: #a5d6ff; }
+    .warn-badge { background: #3d2a0a; color: #f0b429; }
+    /* Detail panel */
+    .detail-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,.7); z-index: 999;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .detail-panel {
+      background: #0d1117; border: 1px solid var(--border); border-radius: 12px;
+      max-width: 800px; width: 100%; max-height: 85vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    }
+    .detail-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .detail-header h3 { font-size: 1rem; color: var(--text); }
+    .detail-close {
+      background: none; border: 1px solid var(--border); color: var(--text-muted);
+      width: 32px; height: 32px; border-radius: 6px; cursor: pointer;
+      font-size: 1.2rem; display: flex; align-items: center; justify-content: center;
+    }
+    .detail-close:hover { border-color: var(--accent); color: var(--text); }
+    .detail-body { padding: 20px; overflow-y: auto; flex: 1; }
+    /* Summary card inside detail */
+    .summary-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .summary-card .id-line { font-family: 'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace; font-size: .8rem; color: var(--text-muted); background: #21262d; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 8px; word-break: break-all; }
+    .summary-card .name { font-size: 1.25rem; font-weight: 600; margin-bottom: 4px; }
+    .summary-card .sub { font-size: .85rem; color: var(--text-muted); margin-bottom: 8px; }
+    .summary-card .badge { display: inline-block; background: #1f2937; color: var(--accent); font-size: .75rem; padding: 2px 8px; border-radius: 12px; margin-right: 4px; }
+    .summary-card .desc { font-size: .9rem; color: var(--text); margin-bottom: 8px; }
+    .summary-card .section-title { font-size: .8rem; font-weight: 600; color: var(--section-title); margin-top: 10px; margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px solid var(--border); }
+    .summary-card .field { font-size: .85rem; color: var(--text-muted); margin: 2px 0; word-break: break-all; }
+    .summary-card .field a { color: var(--accent); text-decoration: none; }
+    .summary-card .field a:hover { text-decoration: underline; }
+    .summary-card .prompt-text { font-size: .85rem; color: #a5d6ff; font-style: italic; word-break: break-word; margin: 4px 0; }
+    .summary-card .flag { display: inline-block; font-size: .75rem; padding: 1px 6px; border-radius: 4px; background: #1f2937; color: #ff7b72; margin-right: 4px; }
+    /* Raw JSON block */
+    .detail-body .json-block { margin-top: 4px; }
+    .detail-body .json-block summary { cursor: pointer; font-size: .8rem; color: var(--text-muted); padding: 4px; border-radius: 4px; user-select: none; }
+    .detail-body .json-block summary:hover { color: var(--text); background: #21262d; }
+    .detail-body pre {
+      background: #161b22; border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; font-size: .8rem; line-height: 1.5;
+      overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      color: #e6edf3;
+    }
+    .detail-body pre .key { color: #79c0ff; }
+    .detail-body pre .string { color: #a5d6ff; }
+    .detail-body pre .number { color: #79c0ff; }
+    .detail-body pre .bool { color: #ff7b72; }
+    .detail-body pre .null { color: #ff7b72; }
+    .detail-body pre .bracket { color: #e6edf3; }
+    .detail-body pre .comma { color: #e6edf3; }
+    .detail-body .dl-link {
+      display: inline-block; background: var(--green); color: #fff;
+      padding: 8px 20px; border-radius: 6px; text-decoration: none;
+      font-size: .9rem; margin-top: 12px;
+    }
+    .detail-body .dl-link:hover { background: var(--green-hover); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>&#127916; Wan2GP Finetune Registry</h1>
+    <p class="subtitle">Community finetunes for Wan2GP &#8212; only finetunes that actually exist on the server are shown, grouped by model family<br><em style="font-size:.85rem;color:var(--text-muted)">Click a card to view details</em></p>
+
+    <div class="filters">
+      <input type="text" id="searchInput" placeholder="Search by name, description, or ID..." oninput="applyFilters()">
+      <label for="familyFilter">Model family</label>
+      <select id="familyFilter" onchange="onFamilyChange()">
+        <option value="">All families</option>
+      </select>
+      <label for="archFilter">Architecture</label>
+      <select id="archFilter" onchange="applyFilters()">
+        <option value="">All</option>
+      </select>
+      <label for="tagFilter">Tag</label>
+      <select id="tagFilter" onchange="applyFilters()">
+        <option value="">All</option>
+      </select>
+    </div>
+
+    <p class="count" id="countDisplay"></p>
+    <div id="finetunes"><p class="empty">Loading...</p></div>
+
+    <!-- Detail modal -->
+    <div id="detailOverlay" class="detail-overlay hidden" onclick="closeDetail(event)">
+      <div class="detail-panel" onclick="event.stopPropagation()">
+        <div class="detail-header">
+          <h3 id="detailTitle">Finetune Details</h3>
+          <button class="detail-close" onclick="closeDetail()">&times;</button>
+        </div>
+        <div class="detail-body" id="detailBody">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="install-hint" style="display:none;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin-top:1rem;">
+      <h3>&#128233; Quick Install in Wan2GP</h3>
+      <p style="font-size:.9rem;color:var(--text-muted);">Save the finetune JSON to your <code>finetunes/</code> folder, then restart or refresh the model dropdown.</p>
+    </div>
+    <p class="api-note">Machine-readable: each finetune JSON at <code>/finetunes/{id}.json</code></p>
+  </div>
+
+  <script>
+    const SPACE = 'GKartist75/wan2gp-finetunes';
+    const TREE_URL = `https://huggingface.co/api/spaces/${SPACE}/tree/main?recursive=1`;
+    let allFinetunes = [];
+    let allArchs = new Set();
+    let allTags = new Set();
+    let FAMILIES = {};
+    let ARCH_FAMILIES = {};
+
+    // Conservative fallbacks used only when families.json is missing a type.
+    const PREFIX_FALLBACK = [
+      ['minimax_h3','minimax_h3'], ['ltx2','ltx2'], ['ltxv','ltxv'],
+      ['hunyuan3d','hunyuan3d'], ['hunyuan_1_5','hunyuan_1_5'], ['hunyuan','hunyuan'],
+      ['kandinsky6','kandinsky6'], ['kandinsky5','kandinsky5'], ['longcat','longcat'],
+      ['magi','magi_human'], ['flux3','flux3'], ['flux2','flux2'], ['flux','flux'],
+      ['qwen_image_2','qwen_image_2'], ['qwen','qwen'], ['z_image','z_image'],
+      ['hidream','hidream'], ['ideogram','ideogram4'], ['krea2','krea2'],
+      ['ming_image','ming_image'], ['moss_image','moss_image'], ['sensenova','sensenova'],
+      ['trellis','trellis2'], ['triposplat','triposplat'], ['triposg','triposg'],
+      ['animate_any_mesh','animate_any_mesh'], ['worldmirror','worldmirror'],
+      ['ace_step','music'], ['stable_audio','music'], ['yue2','music'],
+      ['heartmula','music'], ['minimax_music','music'],
+      ['chatterbox','tts'], ['qwen3_tts','tts'], ['index_tts','tts'],
+      ['kugelaudio','tts'], ['omnivoice','tts'], ['auk','tts'], ['fish_','tts'],
+      ['moss_tts','tts'], ['scenema_audio','tts'], ['dramabox_audio','tts'],
+      ['wan','wan'],
+    ];
+    const TEXT_HINTS = [
+      ['z-image','z_image'], ['z_image','z_image'], ['minimax','minimax_h3'],
+      ['ltx','ltx2'], ['hunyuan','hunyuan'], ['kandinsky','kandinsky5'],
+      ['longcat','longcat'], ['magi','magi_human'], ['flux','flux'], ['qwen','qwen'],
+      ['krea','krea2'], ['ideogram','ideogram4'], ['hidream','hidream'],
+      ['sensenova','sensenova'], ['ming_image','ming_image'],
+      ['moss_image','moss_image'], ['trellis','trellis2'], ['tripo','triposg'],
+    ];
+
+    async function loadFamilyMap() {
+      try {
+        const resp = await fetch('families.json', { cache: 'no-cache' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        FAMILIES = data.families || {};
+        const raw = data.architectures || {};
+        ARCH_FAMILIES = {};
+        Object.keys(raw).forEach(k => { ARCH_FAMILIES[k.toLowerCase()] = raw[k]; });
+      } catch (e) {
+        // The page still works, grouped by raw architecture.
+      }
+    }
+
+    function familyLabel(key) {
+      if (FAMILIES[key] && FAMILIES[key].label) return FAMILIES[key].label;
+      if (key && key !== 'unknown') return key;
+      return 'Unknown';
+    }
+
+    function familyOrder(key) {
+      return FAMILIES[key] ? (Number(FAMILIES[key].order) || 9999) : 9999;
+    }
+
+    function resolveFamily(model) {
+      const group = String(model.group || '').trim();
+      if (group && FAMILIES[group]) return group;
+      const arch = String(model.architecture || '').trim().toLowerCase();
+      const mapped = ARCH_FAMILIES[arch];
+      if (mapped && FAMILIES[mapped]) return mapped;
+      for (const [prefix, family] of PREFIX_FALLBACK) {
+        if (arch.startsWith(prefix) && FAMILIES[family]) return family;
+      }
+      return '';
+    }
+
+    function textHint(model) {
+      const urls = Array.isArray(model.URLs) ? model.URLs : [];
+      const hay = [model.name || '', model.finetune_source_model || '', ...urls]
+        .join(' ').toLowerCase();
+      for (const [token, family] of TEXT_HINTS) {
+        if (hay.includes(token)) return family;
+      }
+      return '';
+    }
+
+    function familyWarning(model, family) {
+      const hint = textHint(model);
+      if (!hint || !FAMILIES[hint] || hint === family) return '';
+      if (!family || family === 'unknown' || family === 'wan' || family === 'wan2_2') {
+        return familyLabel(hint);
+      }
+      return '';
+    }
+
+    async function loadRegistry() {
+      const container = document.getElementById('finetunes');
+      try {
+        await loadFamilyMap();
+        const treeResp = await fetch(TREE_URL);
+        if (!treeResp.ok) throw new Error('Failed to list files');
+        const tree = await treeResp.json();
+
+        const finFiles = tree.filter(f =>
+          f.path.startsWith('finetunes/') && f.path.endsWith('.json')
+        );
+
+        if (finFiles.length === 0) {
+          container.innerHTML = '<p class="empty">No finetunes available yet.</p>';
+          document.getElementById('install-hint').style.display = 'none';
+          return;
+        }
+
+        // Fetch each finetune JSON
+        for (const file of finFiles) {
+          const fid = file.path.slice('finetunes/'.length, -'.json'.length);
+          try {
+            const resp = await fetch(`/finetunes/${fid}.json`);
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            const m = data.model || {};
+            const tags = Array.isArray(m.tags) ? m.tags :
+                         typeof m.tags === 'string' ? m.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const archRaw = String(m.architecture || fid).trim();
+            const arch = archRaw.toLowerCase();
+            const family = resolveFamily(m);
+
+            allFinetunes.push({
+              id: fid,
+              name: m.name || fid,
+              author: m.author || 'community',
+              version: m.version || '\u2014',
+              arch: arch,
+              archRaw: archRaw,
+              family: family || `arch:${arch || 'unknown'}`,
+              familyLabel: family ? familyLabel(family) : (archRaw || 'Unknown'),
+              familyWarning: familyWarning(m, family),
+              description: m.description || '',
+              tags: tags,
+              urls: Array.isArray(m.URLs) ? m.URLs : [],
+              rawData: data
+            });
+            allArchs.add(arch);
+            tags.forEach(t => allTags.add(t));
+          } catch (e) {
+            // skip
+          }
+        }
+
+        // Populate family filter (ordered like Wan2GP's own dropdown)
+        const familySelect = document.getElementById('familyFilter');
+        const familyKeys = [...new Set(allFinetunes.map(f => f.family))];
+        familyKeys.sort((a, b) =>
+          familyOrder(a) - familyOrder(b) ||
+          familyLabel(a).localeCompare(familyLabel(b))
+        );
+        familyKeys.forEach(key => {
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = familyLabel(key);
+          familySelect.appendChild(opt);
+        });
+
+        // Architecture options are filtered by the selected family.
+        populateArchFilter('');
+
+        const tagSelect = document.getElementById('tagFilter');
+        const sortedTags = [...allTags].sort();
+        sortedTags.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          tagSelect.appendChild(opt);
+        });
+
+        renderCards();
+        document.getElementById('install-hint').style.display = 'block';
+      } catch (e) {
+        container.innerHTML = `<p class="error">Failed to load: ${e.message}</p>`;
+      }
+    }
+
+    function populateArchFilter(familyKey) {
+      const select = document.getElementById('archFilter');
+      const previous = select.value;
+      const archs = new Set();
+      allFinetunes.forEach(f => {
+        if (!familyKey || f.family === familyKey) archs.add(f.arch);
+      });
+      select.innerHTML = '<option value="">All</option>';
+      [...archs].sort().forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a;
+        opt.textContent = a;
+        select.appendChild(opt);
+      });
+      select.value = archs.has(previous) ? previous : '';
+    }
+
+    function onFamilyChange() {
+      populateArchFilter(document.getElementById('familyFilter').value);
+      renderCards();
+    }
+
+    function applyFilters() {
+      renderCards();
+    }
+
+    function renderCards() {
+      const container = document.getElementById('finetunes');
+      const searchVal = document.getElementById('searchInput').value.toLowerCase().trim();
+      const familyVal = document.getElementById('familyFilter').value;
+      const archVal = document.getElementById('archFilter').value.toLowerCase();
+      const tagVal = document.getElementById('tagFilter').value;
+
+      let filtered = allFinetunes.filter(f => {
+        if (searchVal) {
+          const inName = f.name.toLowerCase().includes(searchVal);
+          const inDesc = f.description.toLowerCase().includes(searchVal);
+          const inId = f.id.toLowerCase().includes(searchVal);
+          const inAuthor = f.author.toLowerCase().includes(searchVal);
+          if (!inName && !inDesc && !inId && !inAuthor) return false;
+        }
+        if (familyVal && f.family !== familyVal) return false;
+        if (archVal && f.arch !== archVal) return false;
+        if (tagVal && !f.tags.includes(tagVal)) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<p class="empty">No finetunes match your filters.</p>';
+        document.getElementById('countDisplay').textContent = '0 matches';
+        return;
+      }
+
+      document.getElementById('countDisplay').textContent =
+        `${filtered.length} match${filtered.length > 1 ? 'es' : ''}`;
+
+      // Group under model-family headings, ordered like Wan2GP.
+      filtered.sort((a, b) =>
+        familyOrder(a.family) - familyOrder(b.family) ||
+        a.familyLabel.localeCompare(b.familyLabel) ||
+        a.name.localeCompare(b.name)
+      );
+      const counts = {};
+      filtered.forEach(f => { counts[f.family] = (counts[f.family] || 0) + 1; });
+
+      let html = '';
+      let currentFamily = null;
+      for (const f of filtered) {
+        if (f.family !== currentFamily) {
+          currentFamily = f.family;
+          html += `<div class="family-header"><span>${escapeHTML(f.familyLabel)}</span>`
+                + `<span class="family-count">${counts[f.family]}</span></div>`;
+        }
+        const tagsHtml = f.tags.map(t => `<span class="tag">${escapeHTML(t)}</span>`).join('');
+        const warnHtml = f.familyWarning
+          ? `<span class="warn-badge" title="architecture does not match the model name">&#9888; looks like ${escapeHTML(f.familyWarning)}</span>`
+          : '';
+        html += `<div class="card" onclick="showDetail('${f.id.replace(/'/g, "\\'")}')">
+          <h2>${escapeHTML(f.name)}</h2>
+          <p class="author">by ${escapeHTML(f.author)} · v${escapeHTML(f.version)}</p>
+          ${f.description ? `<p class="desc">${escapeHTML(f.description)}</p>` : ''}
+          <div class="meta">
+            <span class="family-badge">&#128193; ${escapeHTML(f.familyLabel)}</span>
+            <span>&#128230; ${escapeHTML(f.archRaw)}</span>
+            ${warnHtml}
+            <span>&#127991;&#65039; ${tagsHtml || '\u2014'}</span>
+          </div>
+        </div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    // ── Detail: summary + raw JSON ─────────────────────────────────────────
+
+    function showDetail(fid) {
+      const fin = allFinetunes.find(f => f.id === fid);
+      if (!fin) return;
+      document.getElementById('detailTitle').textContent = fin.name;
+      const body = document.getElementById('detailBody');
+      body.innerHTML = '<div class="empty">Loading...</div>';
+      document.getElementById('detailOverlay').classList.remove('hidden');
+      body.innerHTML = renderSummary(fin) +
+        '<div class="json-block">' +
+        '<details open>' +
+        '<summary>&#128209; Raw JSON</summary>' +
+        renderJSON(fin.rawData) +
+        '</details></div>' +
+        `<a class="dl-link" href="/finetunes/${fin.id}.json" download>&#128229; Download JSON</a>`;
+    }
+
+    function closeDetail(e) {
+      if (e && e.target !== e.currentTarget) return;
+      document.getElementById('detailOverlay').classList.add('hidden');
+    }
+
+    function escapeHTML(s) {
+      const d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
+
+    function renderSummary(fin) {
+      const data = fin.rawData;
+      const m = data.model || {};
+      const d = data;
+
+      const fid = fin.id;
+      const name = m.name || fid;
+      const arch = m.architecture || '';
+      const fsm = m.finetune_source_model || '';
+      const desc = m.description || '';
+      const author = m.author || '';
+      const version = m.version || '';
+      const prompt = d.prompt || '';
+      const steps = d.num_inference_steps;
+      const guid = d.guidance_scale;
+      const solver = d.sample_solver || m.sample_solver || '';
+
+      // Tags
+      const tags = Array.isArray(m.tags) ? m.tags :
+                   typeof m.tags === 'string' ? m.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+      // Booleans
+      const flags = [];
+      if (m.auto_quantize) flags.push('auto_quantize');
+      if (m.visible === false) flags.push('hidden');
+      if (m.image_outputs) flags.push('image_outputs');
+
+      // Helper: collect URL fields
+      const urlFields = [
+        { label: 'Main Checkpoints', key: 'URLs' },
+        { label: 'Secondary Checkpoints', key: 'URLs2' },
+        { label: 'Text Encoder', key: 'text_encoder_URLs' },
+        { label: 'VAE', key: 'VAE_URLs' },
+        { label: 'Preload', key: 'preload_URLs' },
+        { label: 'Custom URL 1', key: 'custom_url_1' },
+        { label: 'Custom URL 2', key: 'custom_url_2' },
+        { label: 'Custom URL 3', key: 'custom_url_3' },
+      ];
+
+      // Helper: collect LoRAs
+      const loras = Array.isArray(m.activated_loras) ? m.activated_loras :
+                    Array.isArray(m.loras) ? m.loras :
+                    typeof m.loras === 'string' ? [m.loras] : [];
+      const lmults = m.loras_multipliers || [];
+
+      // Resolutions
+      const resParts = [];
+      if (d.resolution) resParts.push(d.resolution);
+      if (Array.isArray(m.resolutions)) {
+        m.resolutions.forEach(r => {
+          if (Array.isArray(r) && r.length >= 2) resParts.push(r[1]);
+          else if (typeof r === 'string') resParts.push(r);
+        });
+      }
+      if (Array.isArray(m.resolutions_categories) && m.resolutions_categories.length) {
+        resParts.push('Cat: ' + m.resolutions_categories.join(', '));
+      }
+
+      let html = '<div class="summary-card">';
+
+      // ID line
+      html += `<div class="id-line">${escapeHTML(fid)}.json</div>`;
+
+      // Name
+      html += `<div class="name">${escapeHTML(name)}</div>`;
+
+      // Subtitle (badges)
+      let sub = '';
+      if (fin.familyLabel) sub += `<span class="badge family-badge">${escapeHTML(fin.familyLabel)}</span> `;
+      if (arch) sub += `<span class="badge">${escapeHTML(arch)}</span> `;
+      if (fin.familyWarning) sub += `<span class="badge warn-badge" title="architecture does not match the model name">&#9888; looks like ${escapeHTML(fin.familyWarning)}</span> `;
+      if (fsm) sub += `<span style="font-size:.85rem;color:var(--text-muted)">Source: ${escapeHTML(fsm)}</span> `;
+      if (author) sub += `<span style="font-size:.85rem;color:var(--text-muted)">by ${escapeHTML(author)}</span>`;
+      if (version) sub += `<span style="font-size:.85rem;color:var(--text-muted)"> · v${escapeHTML(version)}</span>`;
+      if (sub) html += `<div class="sub">${sub}</div>`;
+
+      // Description
+      if (desc) html += `<div class="desc">${escapeHTML(desc)}</div>`;
+
+      // Settings
+      const settings = [];
+      if (steps !== undefined && steps !== null) settings.push(`<b>Steps:</b> ${steps}`);
+      if (guid !== undefined && guid !== null) settings.push(`<b>Guidance:</b> ${guid}`);
+      if (solver) settings.push(`<b>Solver:</b> ${escapeHTML(solver)}`);
+      if (settings.length) {
+        html += `<div class="section-title">Settings</div>`;
+        html += `<div class="field">${settings.join(' &middot; ')}</div>`;
+      }
+
+      // Flags
+      if (flags.length) {
+        html += `<div style="margin:4px 0">`;
+        flags.forEach(f => { html += `<span class="flag">${f}</span> `; });
+        html += `</div>`;
+      }
+
+      // URLs
+      for (const uf of urlFields) {
+        let vals = m[uf.key];
+        if (vals === undefined || vals === null) continue;
+        if (!Array.isArray(vals)) vals = [vals];
+        vals = vals.filter(v => v);
+        if (vals.length) {
+          html += `<div class="section-title">${uf.label}</div>`;
+          vals.forEach(v => {
+            const ev = escapeHTML(String(v));
+            if (String(v).startsWith('http:') || String(v).startsWith('https:')) {
+              html += `<div class="field">&#8226; <a href="${ev}" target="_blank" rel="noopener">${ev}</a></div>`;
+            } else {
+              html += `<div class="field">&#8226; ${ev}</div>`;
+            }
+          });
+        }
+      }
+
+      // LoRAs
+      if (loras.length) {
+        html += `<div class="section-title">LoRAs</div>`;
+        loras.forEach((l, i) => {
+          const mult = lmults[i] ? ` (mult: ${lmults[i]})` : '';
+          html += `<div class="field">&#8226; ${escapeHTML(String(l))}${mult}</div>`;
+        });
+      }
+
+      // Resolutions
+      if (resParts.length) {
+        html += `<div class="section-title">Resolutions</div>`;
+        resParts.forEach(r => {
+          html += `<div class="field">&#8226; ${escapeHTML(r)}</div>`;
+        });
+      }
+
+      // Modules
+      if (Array.isArray(m.modules) && m.modules.length) {
+        html += `<div class="section-title">Modules</div>`;
+        html += `<div class="field">${m.modules.map(x => escapeHTML(String(x))).join(', ')}</div>`;
+      }
+
+      // Tags
+      if (tags.length) {
+        html += `<div class="section-title">Tags</div>`;
+        html += `<div class="field">`;
+        tags.forEach(t => { html += `<span class="badge">${escapeHTML(t)}</span> `; });
+        html += `</div>`;
+      }
+
+      // Prompt
+      if (prompt) {
+        html += `<div class="section-title">Prompt</div>`;
+        const p = prompt.length > 300 ? prompt.substring(0, 300) + '...' : prompt;
+        html += `<div class="prompt-text">&ldquo;${escapeHTML(p)}&rdquo;</div>`;
+      }
+
+      // Infos / Prompt Help
+      if (m.infos) {
+        html += `<div class="section-title">Infos</div>`;
+        const inf = m.infos.length > 300 ? m.infos.substring(0, 300) + '...' : m.infos;
+        html += `<div class="field">${escapeHTML(inf)}</div>`;
+      }
+      if (m.prompt_infos) {
+        html += `<div class="section-title">Prompt Help</div>`;
+        const pi = m.prompt_infos.length > 300 ? m.prompt_infos.substring(0, 300) + '...' : m.prompt_infos;
+        html += `<div class="field">${escapeHTML(pi)}</div>`;
+      }
+
+      // Prompt Enhancer
+      const peFields = [
+        { label: 'Text PE', key: 'text_prompt_enhancer_instructions', tokKey: 'text_prompt_enhancer_max_tokens' },
+        { label: 'Video PE', key: 'video_prompt_enhancer_instructions', tokKey: 'video_prompt_enhancer_max_tokens' },
+        { label: 'Image PE', key: 'image_prompt_enhancer_instructions', tokKey: 'image_prompt_enhancer_max_tokens' },
+      ];
+      let peShown = false;
+      for (const pe of peFields) {
+        const val = m[pe.key];
+        if (val) {
+          if (!peShown) { html += `<div class="section-title">Prompt Enhancer</div>`; peShown = true; }
+          const tok = m[pe.tokKey];
+          const tokStr = tok ? ` (max ${tok} tokens)` : '';
+          const v = val.length > 150 ? val.substring(0, 150) + '...' : val;
+          html += `<div class="field"><b>${pe.label}:</b> ${escapeHTML(v)}${tokStr}</div>`;
+        }
+      }
+
+      html += '</div>'; // .summary-card
+      return html;
+    }
+
+    function renderJSON(obj, indent) {
+      indent = indent || 0;
+      const pad = '  '.repeat(indent);
+      if (obj === null || obj === undefined) return `<span class="null">null</span>`;
+      if (typeof obj === 'boolean') return `<span class="bool">${obj}</span>`;
+      if (typeof obj === 'number') return `<span class="number">${obj}</span>`;
+      if (typeof obj === 'string') {
+        const max = 300;
+        const s = obj.length > max ? obj.substring(0, max) + '...' : obj;
+        return `<span class="string">"${escapeHTML(s)}"</span>`;
+      }
+      if (Array.isArray(obj)) {
+        if (obj.length === 0) return '<span class="bracket">[</span><span class="bracket">]</span>';
+        if (obj.every(i => typeof i === 'string') && obj.join(', ').length < 80) {
+          const items = obj.map(i => `<span class="string">"${escapeHTML(i)}"</span>`).join('<span class="comma">, </span>');
+          return `<span class="bracket">[</span> ${items} <span class="bracket">]</span>`;
+        }
+        let html = `<span class="bracket">[</span>\n`;
+        for (let i = 0; i < obj.length; i++) {
+          html += pad + '  ' + renderJSON(obj[i], indent + 1);
+          if (i < obj.length - 1) html += `<span class="comma">,</span>`;
+          html += '\n';
+        }
+        html += pad + `<span class="bracket">]</span>`;
+        return html;
+      }
+      if (typeof obj === 'object') {
+        const keys = Object.keys(obj);
+        if (keys.length === 0) return '<span class="bracket">{</span><span class="bracket">}</span>';
+        let html = '<span class="bracket">{</span>\n';
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const v = obj[k];
+          html += pad + '  <span class="key">"' + escapeHTML(k) + '"</span><span class="comma">:</span> ' + renderJSON(v, indent + 1);
+          if (i < keys.length - 1) html += `<span class="comma">,</span>`;
+          html += '\n';
+        }
+        html += pad + '<span class="bracket">}</span>';
+        return html;
+      }
+      return escapeHTML(String(obj));
+    }
+
+    loadRegistry();
+  </script>
+</body>
+</html>
