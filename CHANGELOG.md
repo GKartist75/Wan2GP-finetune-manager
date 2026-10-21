@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.7.0 (2026-10-21)
+
+### Added
+- **Native Pack tab** - `fm_pack.py` plus a new **Pack** tab move the curated adult catalog into the plugin: 18+ gate, resumable SHA-256-checked downloads into `adult-pack` folders, recipe writing, CivitAI release downloads, delete actions and LoRA inventory. It is off by default and stores its state in `pack_state.json`. Tests: `tests/test_fm_pack.py`.
+- **Catalog sub-tab** - one table row per item with its live state (missing / installed / stale / partial / no recipe), search and family filters, and a "show only custom" filter. Pick a row and act on just that item: **Download this**, **Write recipe**, **Load gallery**, **Delete this**. Reading the state from the catalog means the table and the actions can never disagree.
+- **Find & Add sub-tab** - search or browse HuggingFace and CivitAI inside the plugin, inspect the result's files (kind, size, HIGH/LOW half, SHA-256), pick a CivitAI version, then add exactly one file to your own list as an **Add as: auto / lora / checkpoint**. **Add by link** resolves a HuggingFace repo, a CivitAI model URL, or a bare CivitAI model id. User-added items are ordinary catalog entries - same download, recipe, gallery, update and delete paths - and are stored in `adult-pack-custom.json`.
+- **Updates sub-tab** - **Check** compares local files with the catalog, **Check online** re-reads each source's live size/hash, **Apply selected** pins the accepted hash/size (and CivitAI version), and **Download selected** fetches the pinned bytes. An accepted update therefore always carries the hash it was verified against.
+- **Pinned CivitAI releases** - `fetch_civitai(pinned=...)` honours a pinned version id over the entry's query, so applying a CivitAI update downloads the version the user reviewed rather than "latest".
+- **User-added items in every bulk flow** - the LoRAs, Checkpoints and CivitAI selection dropdowns, the bulk download/delete actions, the status/details panels and the update checks all read the merged curated + custom catalog, so a custom entry behaves like a curated one everywhere.
+- **Pack-aware recipe assets** - new `fm_assets.py` parses Wan2GP's `|subfolder` and `|%lora_dir` suffixes, routes LoRAs to the architecture's collection, rejects traversal, follows `=recipe_id` references, resolves `adultpack_*` aliases, and inventories checkpoints, text encoders, VAEs, preloads, second-phase URLs and optional assets. The Local tab marks curated pack recipes with an **Adult Pack** badge.
+- **Downloads land where Wan2GP scans** - missing-file downloads and prefetch use the resolved destination instead of flattening files into the checkpoint root, and the summary is re-read from disk after the transfers.
+- **Pure asset tests** - `tests/test_fm_assets.py` covers parsing, destinations, LoRA routing, traversal, references, inventory and aliases without Gradio, Wan2GP or network access.
+
+### Changed
+- The desktop launcher now delegates pack management to this plugin and keeps only a small companion card in **Manage -> Plugins**. The plugin is installed by default from a pinned release; the launcher's old Pack tab is unloaded.
+- Removed the noisy startup line that printed the registry token state.
+- Bumped version to 3.7.0 (plugin.py + plugin_info.json).
+
+### Fixed
+- **"Value:  is not in the list of choices" after touching a catalog filter** - the catalog/find dropdowns (`Item`, `File`, `CivitAI version`, `Wan2GP architecture`) were updated with an empty string to mean "nothing selected". Gradio only accepts an empty string when the component allows custom values, so the *next* event that read the dropdown raised `Value:  is not in the list of choices` (seen as an Error toast on Browse -> search/family, and again in Find & Add). Every "no selection" update now clears the dropdown with `None`, and an architecture is only echoed back when it is actually one of the dropdown's choices.
+
 ## v3.6.9 (2026-10-21)
 
 ### Added

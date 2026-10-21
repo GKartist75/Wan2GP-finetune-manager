@@ -16,6 +16,39 @@ Community finetune registry plugin for Wan2GP. Browse, load, create, improve, an
 | **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. Architecture choices come from the running Wan2GP host and are labelled by family. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
 | **Local** | Visual card browser grouped by family, search and family/architecture filters, load & switch, delete, export, import .json with preview, upload to registry |
 | **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, pick a version from the result dropdown, then fill its URL (routes to LoRA or main checkpoint automatically) |
+| **Pack** | Optional curated adult pack catalog: 18+ gate plus six sub-tabs. **Catalog** (one row per item with its live state; download/recipe/gallery/delete for just that item), **Find & Add** (search or browse HuggingFace and CivitAI, inspect files, add one as a LoRA or checkpoint, or add by link), **LoRAs**, **Checkpoints and recipes**, **CivitAI** (release selection and downloads), **Updates** (offline compare, live online check, apply pins, download the pinned bytes). Off by default. |
+
+## Pack recipes and assets
+
+The plugin understands Wan2GP's pack recipe conventions, so a recipe written by
+the desktop launcher (or shared by another user) opens with the same asset paths
+Wan2GP itself will use:
+
+- `|subfolder` and `|%lora_dir` suffixes are parsed as install instructions, not
+  as part of the URL. Traversal outside the model/LoRA roots is rejected.
+- LoRAs default to the architecture's LoRA collection; `|%lora_dir` pins that
+  explicitly. Checkpoints, text encoders, VAEs, preloads, second-phase URLs and
+  optional assets are all inventoried.
+- `=recipe_id` references are followed without being counted as files, and
+  `adultpack_*` / plain ids resolve to each other as aliases.
+- **Assets** and **Download missing** use the resolved destination, so downloads
+  land where Wan2GP scans them. The summary is re-read from disk after transfers.
+- The Local tab marks curated pack recipes with an **Adult Pack** badge.
+- The **Pack** tab is the native Gradio home for the curated catalog and is off
+  by default. Its state lives in `pack_state.json`; items you add yourself live in
+  `adult-pack-custom.json` and behave exactly like curated ones.
+- **Catalog** reads the same status the actions use, so the table, the detail
+  panel and what **Download this** / **Delete this** will touch can never drift.
+- **Find & Add** inspects a HuggingFace or CivitAI result before you commit to a
+  download: file kind, size, HIGH/LOW half and SHA-256, plus the version list for
+  CivitAI. Adding is one file at a time, as a LoRA or a checkpoint.
+- **Updates** keeps acceptance and download separate: **Check online** records the
+  live hash/size, **Apply selected** pins them, and only then does **Download
+  selected** fetch those exact bytes. CivitAI releases are pinned to the version
+  you reviewed instead of "latest".
+
+The desktop launcher installs this plugin by default and leaves pack management
+here; it keeps only a small companion card in **Manage -> Plugins**.
 
 ## Install
 

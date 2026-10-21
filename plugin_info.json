@@ -1,9 +1,11 @@
 {
   "name": "Finetune Manager",
   "author": "GKartist75",
-  "version": "3.6.9",
+  "version": "3.7.0",
   "description": "Community finetune registry: browse, load, create, edit, improve, and upload finetune JSONs for Wan2GP",
-  "type": ["app"],
+  "type": [
+    "app"
+  ],
   "date": "2026-10-21",
   "wan2gp_version": "12.3"
 }

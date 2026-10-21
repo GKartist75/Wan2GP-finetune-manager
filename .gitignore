@@ -4,4 +4,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 config.json
-
+pack_state.json
+pack_state.json.tmp
+adult-pack-custom.json
+*.part

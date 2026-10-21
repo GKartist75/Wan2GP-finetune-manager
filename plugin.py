@@ -15,6 +15,12 @@ import copy
 import threading
 import time
 
+try:
+    from . import fm_assets, fm_pack
+except ImportError:  # pragma: no cover - direct script/import fallback
+    import fm_assets
+    import fm_pack
+
 
 def _check_bare_filenames(data: dict) -> list[str]:
     """Scan model URL fields for bare filenames that need full download URLs.
@@ -116,7 +122,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.6.9"
+PLUGIN_VERSION = "3.7.0"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -124,6 +130,7 @@ FINETUNES_DIR = "finetunes"
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg_dir = _cfg_path.parent
+_pack_state_path = _cfg_dir / fm_pack.STATE_NAME
 
 REGISTRY_TOKEN = ""
 CIVITAI_NSFW_DEFAULT = False
@@ -140,7 +147,6 @@ if _cfg_path.exists():
         pass
 _PLACEHOLDER_TOKENS = {"test_token_abc", "hf_YOUR_TOKEN_HERE"}
 _REGISTRY_TOKEN_VALID = bool(REGISTRY_TOKEN) and REGISTRY_TOKEN not in _PLACEHOLDER_TOKENS
-print(f"[FM] v{PLUGIN_VERSION} Token:{bool(REGISTRY_TOKEN)}")
 
 
 def _open_config_dir():
@@ -605,7 +611,7 @@ def _fmt_card_html_item(
     urls: list[str], loras: list[str], ftags: list | str,
     is_selected: bool, sel_elem_id: str = "fm-selected",
     is_variant: bool = False, family_label: str = "",
-    family_warning: str = "",
+    family_warning: str = "", is_pack: bool = False,
 ) -> str:
     """Build a single finetune card HTML fragment.
     Used by both the Browse and Local tab card builders."""
@@ -624,6 +630,8 @@ def _fmt_card_html_item(
         )
     if not badge_parts:
         badge_parts.append("<span class='fm-badge fm-badge-secondary'>Unknown</span>")
+    if is_pack:
+        badge_parts.append("<span class='fm-badge fm-badge-pack'>Adult Pack</span>")
     if is_variant:
         badge_parts.append("<span class='fm-badge fm-badge-secondary'>Variant</span>")
     if family_warning:
@@ -1313,39 +1321,57 @@ def _get_model_urls(data: dict) -> list[str]:
     return [u for u in urls if isinstance(u, str) and u.startswith(("http:", "https:"))]
 
 
-def _check_model_download_status(data: dict) -> str:
-    """Check which model files are already on disk.
-    Returns a multi-line status string or empty string."""
+def _ckpts_dir() -> Path:
+    """The checkpoint root Wan2GP resolves files against."""
     from shared.utils import files_locator as fl
 
-    m = data.get("model", {})
-    url_keys = ("URLs", "URLs2", "text_encoder_URLs", "VAE_URLs", "preload_URLs")
-    statuses = []
-    for key in url_keys:
-        raw = m.get(key, [])
-        if isinstance(raw, str):
-            raw = [raw]
-        for entry in raw:
-            if not isinstance(entry, str) or not entry.strip():
-                continue
-            entry = entry.strip()
-            fname = entry.rsplit("/", 1)[-1].split("?")[0]
-            if not fname:
-                continue
-            try:
-                existing = fl.locate_file(fname, error_if_none=False)
-                if existing:
-                    statuses.append(f"\U0001F4E6 {fname} — on disk")
-                else:
-                    statuses.append(f"\u2b07\ufe0f {fname} — needs download")
-            except Exception:
-                statuses.append(f"\u2753 {fname} — could not check")
-    if not statuses:
+    try:
+        return Path(fl.get_download_location())
+    except Exception:
+        return Path("ckpts")
+
+
+def _lora_dir_for(architecture: str, plugin=None) -> Path:
+    """Resolve the architecture's LoRA collection using Wan2GP's own rules."""
+    arch = str(architecture or "").strip()
+    getter = getattr(plugin, "get_lora_dir", None) if plugin is not None else None
+    if callable(getter):
+        try:
+            resolved = getter(arch)
+            if resolved:
+                return Path(resolved)
+        except Exception:
+            pass
+    try:
+        from shared.lora_paths import resolve_lora_dir
+
+        root_getter = getattr(plugin, "get_lora_root", None) if plugin is not None else None
+        root = Path(root_getter()) if callable(root_getter) else Path("loras")
+        return Path(resolve_lora_dir(arch or "wan", str(root), {}))
+    except Exception:
+        return Path("loras") / (arch or "wan")
+
+
+def _asset_inventory(data: dict, plugin=None):
+    model = data.get("model", {}) if isinstance(data, dict) else {}
+    if not isinstance(model, dict):
+        return []
+    arch = str(model.get("architecture", "") or "")
+    return fm_assets.build_inventory(
+        model, _ckpts_dir(), _lora_dir_for(arch, plugin)
+    )
+
+
+def _check_model_download_status(data: dict, plugin=None) -> str:
+    """Check which recipe files are on disk, including LoRAs and subfolders."""
+    assets = _asset_inventory(data, plugin)
+    if not assets:
         return ""
-    return "\n".join(statuses)
+    return fm_assets.format_inventory(assets)
 
 
-def _validate_model_ref(model_id: str) -> tuple[bool, str]:
+
+def _validate_model_ref(model_id: str, plugin=None) -> tuple[bool, str]:
     """Check if a model reference (=id) exists in defaults/ or finetunes/.
     Returns (is_valid, message) where message includes resolved URL(s)
     and download status."""
@@ -1361,7 +1387,7 @@ def _validate_model_ref(model_id: str) -> tuple[bool, str]:
             if urls:
                 msg_parts.append(f"Found: {name}")
                 msg_parts.append(f"\u2192 {urls[0]}")
-                dl_status = _check_model_download_status(data)
+                dl_status = _check_model_download_status(data, plugin)
                 if dl_status:
                     msg_parts.append(dl_status)
                 return True, "\n".join(msg_parts)
@@ -1373,7 +1399,7 @@ def _validate_model_ref(model_id: str) -> tuple[bool, str]:
         if urls:
             msg_parts.append(f"Found: {name}")
             msg_parts.append(f"\u2192 {urls[0]}")
-            dl_status = _check_model_download_status(data)
+            dl_status = _check_model_download_status(data, plugin)
             if dl_status:
                 msg_parts.append(dl_status)
             return True, "\n".join(msg_parts)
@@ -1393,7 +1419,7 @@ def _validate_local_path(path: str) -> tuple[bool, str]:
     return False, "File not found on disk"
 
 
-def _validate_entry(value: str) -> tuple[bool, str]:
+def _validate_entry(value: str, plugin=None) -> tuple[bool, str]:
     """Validate a single URL, model reference (=id), or local path.
     Returns (is_valid, message)."""
     if not value or not isinstance(value, str):
@@ -1402,7 +1428,7 @@ def _validate_entry(value: str) -> tuple[bool, str]:
     if not v:
         return True, ""
     if v.startswith("="):
-        return _validate_model_ref(v[1:])
+        return _validate_model_ref(v[1:], plugin)
     if v.startswith(("http:", "https:")):
         return _validate_url(v)
     if v.startswith(("/", ".", "\\")) or (len(v) > 1 and v[1] == ":"):
@@ -1416,7 +1442,7 @@ def _validate_entry(value: str) -> tuple[bool, str]:
         name = data.get("model", {}).get("name", v)
         urls = _get_model_urls(data)
         if urls:
-            dl_status = _check_model_download_status(data)
+            dl_status = _check_model_download_status(data, plugin)
             msg = f"Model ref: {name}\n\u2192 {urls[0]}"
             if dl_status:
                 msg += f"\n{dl_status}"
@@ -1427,7 +1453,7 @@ def _validate_entry(value: str) -> tuple[bool, str]:
     )
 
 
-def _validate_urls(urls: list[str]) -> list[tuple[str, bool, str]]:
+def _validate_urls(urls: list[str], plugin=None) -> list[tuple[str, bool, str]]:
     """Validate a list of URLs. Returns [(url, valid, message), ...].
     Skips non-URL entries."""
     results = []
@@ -1435,7 +1461,7 @@ def _validate_urls(urls: list[str]) -> list[tuple[str, bool, str]]:
         u = u.strip()
         if not u:
             continue
-        valid, msg = _validate_entry(u)
+        valid, msg = _validate_entry(u, plugin)
         if msg or not valid:
             results.append((u, valid, msg))
     return results
@@ -1443,47 +1469,50 @@ def _validate_urls(urls: list[str]) -> list[tuple[str, bool, str]]:
 
 def _validate_url(url: str) -> tuple[bool, str]:
     """Validate that a URL is reachable via HEAD request.
-    Returns (is_valid, message).
+
+    The ``|subfolder`` / ``|%lora_dir`` suffix is a recipe instruction, not
+    part of the URL, so it is stripped before the request.
     """
     if not url or not isinstance(url, str) or not url.strip():
         return True, ""
-    url = url.strip()
-    if not url.startswith(("http:", "https:")):
+    is_remote, clean_url, subfolder, _name = fm_assets.parse_source(url.strip())
+    if not is_remote or not clean_url:
         return True, "Not a remote URL (local path)"
     try:
-        req = urllib.request.Request(url, method="HEAD")
-        req.add_header("User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)")
-        # Some servers reject HEAD on /resolve/main/ — try GET as fallback
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; FinetuneManager/3.0)"}
+        if CIVITAI_API_KEY and fm_assets.is_civitai_url(clean_url):
+            headers.update(_civitai_api_headers())
+        req = urllib.request.Request(clean_url, method="HEAD", headers=headers)
+        # Some servers reject HEAD on /resolve/main/ - try GET as fallback
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 code = resp.getcode()
         except urllib.error.HTTPError as e:
             code = e.code
             if code in (405, 501, 403):
-                get_req = urllib.request.Request(url, method="GET")
-                get_req.add_header(
-                    "User-Agent", "Mozilla/5.0 (compatible; FinetuneManager/3.0)"
-                )
+                get_req = urllib.request.Request(clean_url, method="GET", headers=headers)
                 get_req.add_header("Range", "bytes=0-0")
                 try:
                     with urllib.request.urlopen(get_req, timeout=15) as get_resp:
                         code = get_resp.getcode()
                 except urllib.error.HTTPError as e2:
                     code = e2.code
+        suffix = f" (saves to {subfolder})" if subfolder else ""
         if code and code < 400:
-            return True, f"HTTP {code}"
+            return True, f"HTTP {code}{suffix}"
         elif code and code == 404:
-            return False, "HTTP 404 — Not Found"
+            return False, "HTTP 404 - Not Found"
         elif code and code == 401:
-            return False, "HTTP 401 — Unauthorized (may need token)"
+            return False, "HTTP 401 - Unauthorized (may need token)"
         elif code and code == 403:
-            return False, "HTTP 403 — Forbidden (may need token)"
+            return False, "HTTP 403 - Forbidden (may need token)"
         else:
             return False, f"HTTP {code}"
     except urllib.error.URLError as e:
         return False, f"Connection error: {e.reason}"
     except Exception as e:
         return False, f"Error: {e}"
+
 
 
 def _build_url_validation_html(results: list[tuple[str, bool, str]]) -> str:
@@ -1510,68 +1539,54 @@ def _build_url_validation_html(results: list[tuple[str, bool, str]]) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 
-def _download_finetune_file(url: str, target_dir: str | None = None) -> str:
-    """Download a single file from a URL into the checkpoints directory.
-    Returns a status string.
-    """
-    url = url.strip()
-    if not url.startswith(("http:", "https:")):
-        return f"Skipped (not remote): {url}"
-    fname = url.rsplit("/", 1)[-1].split("?")[0]
-    if not fname:
-        fname = "download"
+def _download_asset(asset, plugin=None) -> str:
+    """Download one inventory row to its resolved destination."""
+    label = asset.filename or asset.source
+    if asset.present:
+        return f"Already exists: {asset.label}: {label}"
+    if asset.error:
+        return f"Failed: {asset.label}: {label} - {asset.error}"
+    if not asset.downloadable or not asset.url or not asset.destination:
+        return f"Skipped (local only): {asset.label}: {label}"
     from shared.utils.download import download_file
-    from shared.utils import files_locator as fl
 
-    if target_dir:
-        dest_dir = Path(target_dir)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = str(dest_dir / fname)
-    else:
-        dest = fl.get_download_location(fname)
+    dest = Path(asset.destination)
     try:
-        existing = fl.locate_file(fname, error_if_none=False)
-        if existing:
-            return f"Already exists: {fname}"
-        download_file(url, dest)
-        return f"Downloaded: {fname}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Wan2GP's downloader cannot send an Authorization header; CivitAI's
+        # documented query-token form is attached only for CivitAI hosts.
+        download_file(_civitai_with_token(asset.url), str(dest))
+        if dest.is_file() and dest.stat().st_size > 0:
+            return f"Downloaded {asset.label}: {dest}"
+        return f"Failed: {asset.label}: {label} - download produced no file"
     except Exception as e:
-        return f"Failed: {fname} — {e}"
+        return f"Failed: {asset.label}: {label} - {e}"
 
 
-def _download_finetune_files(data: dict) -> str:
-    """Download all URL-based files referenced in a finetune model dict.
-    Returns a multi-line status string.
+def _download_finetune_files(data: dict, plugin=None) -> str:
+    """Download every missing, downloadable asset in a finetune recipe.
+
+    The inventory is the single source of truth: it already resolved
+    ``|subfolder`` / ``|%lora_dir``, LoRA routing and model references.
     """
-    from shared.utils import files_locator as fl
-
-    m = data.get("model", {})
-    url_keys = DOWNLOAD_URL_KEYS
-    all_urls = []
-    for k in url_keys:
-        v = m.get(k, []) or []
-        if isinstance(v, str):
-            v = [v]
-        all_urls.extend(v)
-    loras = m.get("loras", []) or []
-    if isinstance(loras, str):
-        loras = [loras]
-    all_urls.extend(loras)
-
+    assets = _asset_inventory(data, plugin)
+    if not assets:
+        return "No file assets found."
     lines = []
-    for url in all_urls:
-        if not url or not isinstance(url, str) or not url.strip():
-            continue
-        result = _download_finetune_file(url)
-        lines.append(result)
-    if not lines:
-        return "No remote URLs found to download"
+    for asset in assets:
+        if asset.present:
+            lines.append(f"Already exists: {asset.label}: {asset.filename}")
+        else:
+            lines.append(_download_asset(asset, plugin))
+    DISK_EXISTS_CACHE.clear()
+    # Re-read after the transfers so the summary reflects what is on disk now.
+    summary = fm_assets.inventory_summary(_asset_inventory(data, plugin))
+    lines.append(
+        f"{summary['present']}/{summary['total']} present, "
+        f"{summary['missing']} missing"
+    )
     return "\n".join(lines)
 
-
-# ═══════════════════════════════════════════════════════════════════
-# P1: CivitAI Integration
-# ═══════════════════════════════════════════════════════════════════
 
 CIVITAI_API = "https://civitai.com/api/v1"
 # civitai.red is the adult front-end of the same service: same catalogue, same ids,
@@ -1616,10 +1631,16 @@ def _civitai_with_token(url: str) -> str:
     only ever attached to CivitAI hosts."""
     if not CIVITAI_API_KEY or not url:
         return url
-    if urllib.parse.urlsplit(url).hostname not in CIVITAI_SITES:
+    parts = urllib.parse.urlsplit(url)
+    if parts.hostname not in CIVITAI_SITES:
         return url
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}token={urllib.parse.quote(CIVITAI_API_KEY, safe='')}"
+    if "token" in urllib.parse.parse_qs(parts.query):
+        return url
+    query = parts.query + "&" if parts.query else ""
+    query += "token=" + urllib.parse.quote(CIVITAI_API_KEY, safe="")
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, query, parts.fragment)
+    )
 
 
 CIVITAI_SITE_DEFAULT = _civitai_site(CIVITAI_SITE_DEFAULT)
@@ -2144,15 +2165,39 @@ def _settings_path_for(fin_id: str) -> Path:
 
 
 def _resolve_finetune_path(fin_id: str) -> Path | None:
-    """Resolve a finetune JSON path and verify it's within FINETUNES_DIR.
-    Returns None if the path escapes the directory."""
+    """Resolve a finetune JSON path and verify it stays inside finetunes/.
+
+    ``adultpack_foo`` and ``foo`` are the same pack recipe.  Try the exact id
+    first, then its alias, so editing one never creates a duplicate file.
+    """
     base = Path(FINETUNES_DIR).resolve()
-    p = (base / f"{fin_id}.json").resolve()
+    for stem in fm_assets.finetune_candidates(fin_id):
+        p = (base / f"{stem}.json").resolve()
+        try:
+            p.relative_to(base)
+        except ValueError:
+            continue
+        if p.is_file():
+            return p
+    # Return the exact path when nothing exists so callers can create it.
+    exact = (base / f"{str(fin_id).strip()}.json").resolve()
     try:
-        p.relative_to(base)
-        return p
+        exact.relative_to(base)
+        return exact
     except ValueError:
         return None
+
+
+def _existing_finetune_stems() -> set[str]:
+    p = Path(FINETUNES_DIR)
+    if not p.exists():
+        return set()
+    stems = {f.stem for f in p.glob("*.json")}
+    # A pack recipe also reserves its bare id.
+    for stem in list(stems):
+        if fm_assets.is_pack_id(stem):
+            stems.add(fm_assets.pack_display_id(stem))
+    return stems
 
 
 def _write_finetune(fin_id, data):
@@ -2193,6 +2238,7 @@ CARD_CSS = """
 .fm-badge { display:inline-block; font-size:10px; padding:2px 8px; border-radius:12px; background:var(--primary-200,#e0e7ff); color:var(--primary-500,#4338ca); margin-right:4px; font-weight:500; letter-spacing:.02em }
 .fm-badge-secondary { background:var(--neutral-100,#f3f4f6); color:var(--neutral-600,#6b7280) }
 .fm-badge-warn { background:color-mix(in srgb,#f59e0b 22%,transparent); color:#f59e0b }
+.fm-badge-pack { background:color-mix(in srgb,#14b8a6 20%,transparent); color:#2dd4bf }
 .fm-family-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:14px 0 6px; padding:0 2px; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--body-text-color-subdued,#6b7280) }
 .fm-family-header:first-child { margin-top:0 }
 .fm-family-header::after { content:""; flex:1; height:1px; background:var(--border-color-primary,#e5e7eb); order:1 }
@@ -2209,6 +2255,1746 @@ CARD_CSS = """
 """
 
 
+def _pack_lora_root(plugin) -> Path:
+    getter = getattr(plugin, "get_lora_root", None) if plugin is not None else None
+    if callable(getter):
+        try:
+            root = getter()
+            if root:
+                return Path(root)
+        except Exception:
+            pass
+    return Path("loras")
+
+
+def _pack_md_cell(value) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ")
+
+
+def _pack_status_md(manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=None) -> str:
+    st = fm_pack.catalog_status(
+        manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=custom
+    )
+    loras = st["loras"]
+    fins = st["finetunes"]
+    civ = st["civitai"]
+    l_ok = sum(1 for x in loras if x.get("present"))
+    l_bytes = sum(int(x.get("bytes") or 0) for x in loras)
+    l_exp = sum(int(x.get("expected") or 0) for x in loras)
+    f_ok = sum(1 for x in fins if x.get("weightsPresent"))
+    f_rec = sum(1 for x in fins if x.get("recipeWritten"))
+    c_ok = sum(1 for x in civ if x.get("installed"))
+    lines = [
+        f"**LoRAs:** {l_ok}/{len(loras)} installed - "
+        f"{fm_pack.human_bytes(l_bytes)} / {fm_pack.human_bytes(l_exp)}",
+        f"**Checkpoints:** {f_rec}/{len(fins)} recipes written - "
+        f"{f_ok}/{len(fins)} weight sets present",
+        f"**CivitAI:** {c_ok}/{len(civ)} installed",
+    ]
+    for group in manifest.get("groups", []):
+        gid = str(group.get("id") or "")
+        rows = [x for x in loras if x.get("group") == gid]
+        if rows:
+            ok = sum(1 for x in rows if x.get("present"))
+            lines.append(f"- {group.get('title') or gid}: {ok}/{len(rows)}")
+    own = [x for x in loras + fins if x.get("custom")]
+    if own:
+        ok = sum(1 for x in own if x.get("present") or x.get("weightsPresent"))
+        lines.append(f"- Added by you: {ok}/{len(own)}")
+    return "\n".join(lines)
+
+
+def _pack_details_md(manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=None) -> str:
+    st = fm_pack.catalog_status(
+        manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=custom
+    )
+    lines = [
+        "#### Checkpoints and recipes",
+        "| Name | Architecture | Recipe | Weights |",
+        "|---|---|---|---|",
+    ]
+    for row in st["finetunes"]:
+        assets = row.get("assets") or []
+        present = sum(1 for a in assets if a.get("present"))
+        lines.append(
+            "| {name} | {arch} | {recipe} | {present}/{total} |".format(
+                name=_pack_md_cell(row.get("name")),
+                arch=_pack_md_cell(row.get("architecture")),
+                recipe="yes" if row.get("recipeWritten") else "no",
+                present=present,
+                total=len(assets),
+            )
+        )
+    lines += [
+        "",
+        "#### CivitAI",
+        "| Name | Installed | Files |",
+        "|---|---|---|",
+    ]
+    for row in st["civitai"]:
+        lines.append(
+            "| {name} | {installed} | {present}/{total} |".format(
+                name=_pack_md_cell(row.get("name")),
+                installed="yes" if row.get("installed") else "no",
+                present=row.get("present", 0),
+                total=row.get("expected", 0),
+            )
+        )
+    return "\n".join(lines)
+
+
+def _pack_inventory_md(plugin) -> str:
+    root = _pack_lora_root(plugin)
+    inv = fm_pack.lora_inventory(root)
+    total = sum(int(x.get("bytes") or 0) for x in inv)
+    lines = [
+        f"**{len(inv)} LoRA weight files** in `{root}` - "
+        f"{fm_pack.human_bytes(total)}"
+    ]
+    if inv:
+        lines.append("")
+        for item in inv[:120]:
+            mark = "pack" if item.get("known") else ""
+            lines.append(
+                f"- `{item.get('rel')}` - {fm_pack.human_bytes(item.get('bytes') or 0)}"
+                + (f" ({mark})" if mark else "")
+            )
+        if len(inv) > 120:
+            lines.append(f"- ... and {len(inv) - 120} more")
+    return "\n".join(lines)
+
+
+def _fmt_update_report(report: dict) -> str:
+    lines = ["#### Update check"]
+    for section, title in (
+        ("loras", "LoRAs"),
+        ("finetunes", "Checkpoints"),
+        ("civitai", "CivitAI"),
+    ):
+        rows = report.get(section) or []
+        bad = [r for r in rows if r.get("status") not in ("ok",)]
+        lines.append(f"- **{title}:** {len(rows) - len(bad)}/{len(rows)} ok")
+        for row in bad[:40]:
+            lines.append(f"  - `{row.get('id')}` - {row.get('status')}")
+        if len(bad) > 40:
+            lines.append(f"  - ... and {len(bad) - 40} more")
+    return "\n".join(lines)
+
+
+def _fmt_live_report(report: dict) -> str:
+    items = report.get("items") or []
+    changed = [x for x in items if x.get("status") in ("changed", "missing")]
+    lines = [
+        f"#### Live check - {report.get('checkedAt') or ''}",
+        f"- **{len(items) - len(changed)}/{len(items)}** current; "
+        f"**{len(changed)}** need attention.",
+    ]
+    for item in changed[:60]:
+        lines.append(
+            f"  - `{item.get('id')}` ({item.get('kind')}) - {item.get('status')}"
+        )
+    if len(changed) > 60:
+        lines.append(f"  - ... and {len(changed) - 60} more")
+    unknown = [x for x in items if x.get("status") == "unknown"]
+    if unknown:
+        lines.append(
+            f"- {len(unknown)} could not be compared (source unreachable, or the "
+            "file is not in the repo tree)."
+        )
+    for err in (report.get("failed") or [])[:10]:
+        lines.append(f"  - ! {err}")
+    if not items:
+        lines.append("- Nothing in the catalog to check.")
+    return "\n".join(lines)
+
+
+def _pack_media_html(urls, title="") -> str:
+    items = []
+    for url in urls or []:
+        u = str(url or "").strip()
+        if not u.startswith(("https://", "http://")):
+            continue
+        safe = html.escape(u, quote=True)
+        if u.lower().endswith((".mp4", ".webm", ".mov")):
+            items.append(
+                f"<video src=\"{safe}\" controls muted loop "
+                "style=\"max-width:240px;max-height:180px;border-radius:8px\"></video>"
+            )
+        else:
+            items.append(
+                f"<img src=\"{safe}\" loading=\"lazy\" alt=\"{html.escape(title)}\" "
+                "style=\"max-width:240px;max-height:180px;object-fit:cover;border-radius:8px\">"
+            )
+    if not items:
+        return ""
+    return (
+        "<div style=\"display:flex;flex-wrap:wrap;gap:8px;padding:4px 0\">"
+        + "".join(items)
+        + "</div>"
+    )
+
+
+def _pack_catalog_rows(st: dict, catalog: dict) -> list[dict]:
+    """Flatten catalog status into one row per selectable item."""
+    entries = {str(x.get("id")): x for x in catalog.get("loras", [])}
+    entries.update({str(x.get("id")): x for x in catalog.get("finetunes", [])})
+    entries.update({str(x.get("id")): x for x in catalog.get("civitai", [])})
+    rows: list[dict] = []
+    for row in st.get("loras") or []:
+        entry = entries.get(str(row.get("id"))) or {}
+        state = "missing"
+        if row.get("present"):
+            state = "stale" if row.get("stale") else "installed"
+        rows.append(
+            {
+                "kind": "LoRA",
+                "id": str(row.get("id")),
+                "pick": f"lora:{row.get('id')}",
+                "name": row.get("name") or "",
+                "family": row.get("family") or entry.get("family") or "",
+                "arch": "",
+                "bytes": int(row.get("expected") or row.get("bytes") or 0),
+                "state": state,
+                "custom": bool(entry.get("custom")),
+                "entry": entry,
+            }
+        )
+    for row in st.get("finetunes") or []:
+        entry = entries.get(str(row.get("id"))) or {}
+        assets = row.get("assets") or []
+        present = sum(1 for a in assets if a.get("present"))
+        if present == len(assets) and row.get("recipeWritten"):
+            state = "installed"
+        elif present == len(assets) and assets:
+            state = "no recipe"
+        elif present:
+            state = "partial"
+        else:
+            state = "missing"
+        if any(a.get("stale") for a in assets):
+            state = "stale"
+        rows.append(
+            {
+                "kind": "Checkpoint",
+                "id": str(row.get("id")),
+                "pick": f"finetune:{row.get('id')}",
+                "name": row.get("name") or "",
+                "family": row.get("family") or entry.get("family") or "",
+                "arch": row.get("architecture") or "",
+                "bytes": int(entry.get("bytes") or 0) + int(entry.get("bytesLow") or 0),
+                "state": state,
+                "custom": bool(entry.get("custom")),
+                "entry": entry,
+            }
+        )
+    for row in st.get("civitai") or []:
+        entry = entries.get(str(row.get("id"))) or {}
+        state = "missing"
+        if row.get("installed"):
+            state = "installed"
+        elif row.get("present"):
+            state = "partial"
+        rows.append(
+            {
+                "kind": "CivitAI",
+                "id": str(row.get("id")),
+                "pick": f"civitai:{row.get('id')}",
+                "name": row.get("name") or "",
+                "family": entry.get("family") or "",
+                "arch": entry.get("architecture") or "",
+                "bytes": int(entry.get("bytesEstimate") or 0),
+                "state": state,
+                "custom": bool(entry.get("custom")),
+                "entry": entry,
+            }
+        )
+    return rows
+
+
+def _filter_catalog_rows(rows: list[dict], query: str, family: str, show: str) -> list[dict]:
+    q = str(query or "").strip().lower()
+    family = str(family or "all")
+    show = str(show or "all")
+    out = []
+    for row in rows:
+        haystack = " ".join(
+            [str(row.get("name") or ""), str(row.get("id") or ""), str(row.get("arch") or "")]
+        ).lower()
+        if q and q not in haystack:
+            continue
+        if family != "all" and str(row.get("family") or "") != family:
+            continue
+        state = str(row.get("state") or "")
+        if show == "missing" and state == "installed":
+            continue
+        if show == "installed" and state != "installed":
+            continue
+        if show == "custom" and not row.get("custom"):
+            continue
+        out.append(row)
+    return out
+
+
+def _pack_table_value(rows: list[dict]) -> list[list[str]]:
+    return [
+        [
+            str(r.get("kind") or ""),
+            str(r.get("name") or ""),
+            str(r.get("family") or ""),
+            str(r.get("arch") or ""),
+            fm_pack.human_bytes(r.get("bytes") or 0),
+            str(r.get("state") or ""),
+            "yes" if r.get("custom") else "",
+        ]
+        for r in rows
+    ]
+
+
+def _pack_pick_choices(rows: list[dict]) -> list[tuple[str, str]]:
+    return [
+        (
+            f"{r.get('name')} - {r.get('kind')} - {r.get('state')}"
+            + (" - added by you" if r.get("custom") else ""),
+            str(r.get("pick")),
+        )
+        for r in rows
+    ]
+
+
+def _pack_detail_md(row: dict | None) -> str:
+    if not row:
+        return "Select an item above."
+    entry = row.get("entry") or {}
+    lines = [
+        f"#### {row.get('name')}",
+        f"- **Kind:** {row.get('kind')}",
+        f"- **Family / architecture:** {row.get('family') or '?'} / {row.get('arch') or '?'}",
+        f"- **Size:** {fm_pack.human_bytes(row.get('bytes') or 0)}",
+        f"- **State:** {row.get('state')}",
+    ]
+    page = str(entry.get("repoPage") or "")
+    if page.startswith("https://"):
+        lines.append(f"- **Source:** [{page}]({page})")
+    file_page = str(entry.get("filePage") or "")
+    if file_page.startswith("https://"):
+        lines.append(f"- **File:** [{entry.get('file')}]({file_page})")
+    if entry.get("licenseNote"):
+        lines.append(f"- **Licence:** {entry.get('licenseNote')}")
+    assets = entry.get("assets") if isinstance(entry.get("assets"), list) else None
+    if assets:
+        lines.append("")
+        lines.append("**Files**")
+        for asset in assets:
+            status = "present" if asset.get("present") else "missing"
+            lines.append(f"- `{asset.get('path') or asset.get('source')}` - {status}")
+    return "\n".join(lines)
+
+
+def _build_pack_tab(plugin) -> None:
+    """Add the curated adult-pack catalog as a native Gradio tab."""
+    manifest = fm_pack.load_manifest()
+    state = fm_pack.load_state(_pack_state_path, manifest)
+
+    def _catalog() -> dict:
+        return fm_pack.merged_catalog(manifest, fm_pack.load_custom())
+
+    ckpts_dir = lambda: _ckpts_dir()
+    lora_dir_for = lambda arch: _lora_dir_for(arch, plugin)
+    finetunes_dir = Path(FINETUNES_DIR)
+    active = bool(state.get("enabled") and state.get("ageConfirmed"))
+    civ_active = bool(active and state.get("civitaiEnabled"))
+
+    gr.Markdown(
+        "### Adult Pack\n"
+        "Curated checkpoints and LoRAs that Wan2GP can load. Weights stay under "
+        "`adult-pack` folders; checkpoints are written as "
+        "`finetunes/adultpack_*.json` recipes. Adult content is optional and "
+        "off by default."
+    )
+    with gr.Row():
+        pack_enabled = gr.Checkbox(
+            label="Enable the adult pack", value=bool(state.get("enabled"))
+        )
+        pack_age = gr.Checkbox(
+            label="I am 18 or older and it is legal where I live",
+            value=bool(state.get("ageConfirmed")),
+        )
+    pack_gate_msg = gr.Markdown(
+        "**Adult pack enabled.** Nothing downloads until you press a download button."
+        if active
+        else "The adult pack is off. Tick both boxes to show the catalog."
+    )
+
+    def _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel) -> None:
+        state["enabled"] = bool(enabled)
+        state["ageConfirmed"] = bool(age)
+        state["civitaiEnabled"] = bool(civ_enabled)
+        state["selections"]["loras"] = [str(x) for x in (lora_sel or [])]
+        state["selections"]["finetunes"] = [str(x) for x in (ft_sel or [])]
+        state["selections"]["civitai"] = [str(x) for x in (civ_sel or [])]
+        fm_pack.save_state(state, _pack_state_path)
+
+    with gr.Column(visible=active) as pack_body:
+        with gr.Row():
+            pack_refresh = gr.Button("Refresh status")
+            pack_defaults = gr.Button("Select recommended")
+            pack_download = gr.Button("Download selected", variant="primary")
+            pack_recipes = gr.Button("Write selected recipes")
+            pack_check_updates = gr.Button("Check updates")
+            pack_verify_hashes = gr.Checkbox(label="Verify hashes", value=False, scale=0)
+        catalog = _catalog()
+        pack_status = gr.Markdown(
+            _pack_status_md(
+                manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=catalog
+            )
+            if active
+            else ""
+        )
+
+        lora_choices = [
+            (
+                f"{entry.get('name')} - {fm_pack.human_bytes(entry.get('bytes') or 0)}"
+                + (f" - {entry.get('pair')} half" if entry.get("pair") else ""),
+                str(entry.get("id")),
+            )
+            for entry in catalog.get("loras", [])
+        ]
+        fin_choices = [
+            (
+                f"{entry.get('name')} - {entry.get('architecture')} - "
+                f"{fm_pack.human_bytes(int(entry.get('bytes') or 0) + int(entry.get('bytesLow') or 0))}",
+                str(entry.get("id")),
+            )
+            for entry in catalog.get("finetunes", [])
+        ]
+        civ_choices = [
+            (
+                f"{entry.get('name')} - {entry.get('architecture') or entry.get('family')}",
+                str(entry.get("id")),
+            )
+            for entry in catalog.get("civitai", [])
+        ]
+        lora_ids = set(str(x) for x in state["selections"].get("loras", []))
+        ft_ids = set(str(x) for x in state["selections"].get("finetunes", []))
+        civ_ids = set(str(x) for x in state["selections"].get("civitai", []))
+
+        def _pack_arch_choices() -> list[tuple[str, str]]:
+            rows = _architecture_choices(plugin)
+            if rows:
+                return rows
+            return [
+                (
+                    f"{entry.get('label') or entry.get('id')} \u00b7 "
+                    f"{entry.get('architecture')}",
+                    str(entry.get("architecture")),
+                )
+                for entry in manifest.get("archMap", [])
+                if entry.get("architecture")
+            ]
+
+        initial_rows = _pack_catalog_rows(
+            fm_pack.catalog_status(
+                manifest,
+                ckpts_dir(),
+                lora_dir_for,
+                finetunes_dir,
+                state,
+                custom=catalog,
+            ),
+            catalog,
+        )
+
+        # A dropdown rejects values that are not in its choices, so the
+        # handlers below must only ever echo an architecture that is listed.
+        arch_values = {v for _, v in _pack_arch_choices()}
+
+        with gr.Tabs():
+            with gr.Tab("Catalog"):
+                gr.Markdown(
+                    "Every curated and user-added item with its live state. "
+                    "Filter the list, pick an item, then act on just that one."
+                )
+                with gr.Row():
+                    cat_q = gr.Textbox(label="Filter", scale=3, container=False)
+                    cat_family = gr.Dropdown(
+                        label="Family",
+                        choices=[("All families", "all")]
+                        + sorted(
+                            {
+                                (str(x.get("family")), str(x.get("family")))
+                                for x in catalog.get("loras", [])
+                                + catalog.get("finetunes", [])
+                                + catalog.get("civitai", [])
+                                if x.get("family")
+                            }
+                        ),
+                        value="all",
+                        scale=1,
+                    )
+                    cat_show = gr.Dropdown(
+                        label="Show",
+                        choices=["all", "missing", "installed", "custom"],
+                        value="all",
+                        scale=1,
+                    )
+                cat_table = gr.Dataframe(
+                    headers=[
+                        "Kind", "Name", "Family", "Architecture",
+                        "Size", "State", "Added by you",
+                    ],
+                    value=_pack_table_value(initial_rows),
+                    interactive=False,
+                    wrap=True,
+                )
+                cat_pick = gr.Dropdown(label="Item", choices=[], filterable=True)
+                with gr.Row():
+                    cat_download = gr.Button("Download this", variant="primary")
+                    cat_recipe = gr.Button("Write recipe")
+                    cat_gallery = gr.Button("Load gallery")
+                    cat_delete = gr.Button("Delete this", variant="stop")
+                cat_detail = gr.Markdown("Select an item above.")
+                cat_media = gr.HTML("")
+                cat_log = gr.Textbox(label="Result", interactive=False)
+
+            with gr.Tab("Find & Add"):
+                gr.Markdown(
+                    "Search HuggingFace or CivitAI, inspect the files inside, and "
+                    "add one to your own list. Added items behave exactly like the "
+                    "curated ones: same download, recipe and delete paths."
+                )
+                with gr.Row():
+                    find_source = gr.Dropdown(
+                        label="Source",
+                        choices=[("HuggingFace", "hf"), ("CivitAI", "civitai")],
+                        value="hf",
+                        scale=1,
+                    )
+                    find_mode = gr.Dropdown(
+                        label="Mode",
+                        choices=[("Search", "search"), ("Browse", "browse")],
+                        value="search",
+                        scale=1,
+                    )
+                    find_query = gr.Textbox(label="Query", scale=3, container=False)
+                    find_kind = gr.Dropdown(
+                        label="Type",
+                        choices=["any", "lora", "checkpoint", "gguf"],
+                        value="any",
+                        scale=1,
+                    )
+                    find_sort = gr.Dropdown(
+                        label="Sort",
+                        choices=["trending", "downloads", "likes", "newest"],
+                        value="trending",
+                        scale=1,
+                    )
+                    find_period = gr.Dropdown(
+                        label="Period",
+                        choices=["week", "month", "year"],
+                        value="week",
+                        scale=1,
+                    )
+                    find_limit = gr.Slider(5, 50, 24, step=1, label="Limit", scale=1)
+                find_run = gr.Button("Search / Browse", variant="primary")
+                find_table = gr.Dataframe(
+                    headers=[
+                        "Title", "Family", "Architecture",
+                        "Downloads", "Updated", "Id",
+                    ],
+                    value=[],
+                    interactive=False,
+                    wrap=True,
+                )
+                find_pick = gr.Dropdown(label="Result", choices=[], filterable=True)
+                with gr.Row():
+                    find_inspect = gr.Button("Inspect")
+                    find_version = gr.Dropdown(
+                        label="CivitAI version", choices=[], scale=2
+                    )
+                    find_arch = gr.Dropdown(
+                        label="Wan2GP architecture",
+                        choices=_pack_arch_choices(),
+                        filterable=True,
+                        scale=2,
+                    )
+                find_files = gr.Dataframe(
+                    headers=["File", "Kind", "Size", "Half", "SHA-256"],
+                    value=[],
+                    interactive=False,
+                    wrap=True,
+                )
+                find_file_pick = gr.Dropdown(label="File", choices=[], filterable=True)
+                with gr.Row():
+                    find_kind_override = gr.Dropdown(
+                        label="Add as",
+                        choices=["auto", "lora", "checkpoint"],
+                        value="auto",
+                        scale=1,
+                    )
+                    find_add = gr.Button("Add selected file", variant="primary")
+                find_media = gr.HTML("")
+                find_status = gr.Textbox(label="Status", interactive=False)
+                with gr.Accordion("Add by link", open=False):
+                    gr.Markdown(
+                        "Paste a HuggingFace repo (`owner/name` or its URL), a "
+                        "CivitAI model URL, or a CivitAI model id."
+                    )
+                    with gr.Row():
+                        find_url = gr.Textbox(label="Repo / URL / id", scale=3)
+                        find_url_arch = gr.Dropdown(
+                            label="Wan2GP architecture",
+                            choices=_pack_arch_choices(),
+                            filterable=True,
+                            scale=2,
+                        )
+                    find_url_btn = gr.Button("Resolve and inspect")
+
+            with gr.Tab("LoRAs"):
+                gr.Markdown(
+                    "Select LoRAs to download. HIGH/LOW pairs are selected "
+                    "together automatically. They land in the collection "
+                    "Wan2GP scans, under `adult-pack/`."
+                )
+                pack_lora_sel = gr.Dropdown(
+                    label="LoRAs",
+                    choices=lora_choices,
+                    value=[x for x in lora_ids if x in {v for _, v in lora_choices}],
+                    multiselect=True,
+                    filterable=True,
+                )
+                with gr.Row():
+                    pack_inv_btn = gr.Button("Refresh LoRA inventory")
+                    pack_delete_loras = gr.Button("Delete selected LoRAs")
+                pack_inv = gr.Markdown("")
+            with gr.Tab("Checkpoints and recipes"):
+                gr.Markdown(
+                    "Checkpoint entries become `adultpack_*.json` recipes. "
+                    "Downloading the weights and writing the recipe are separate "
+                    "actions, so you can inspect a recipe before fetching tens of GB."
+                )
+                pack_ft_sel = gr.Dropdown(
+                    label="Checkpoints / recipes",
+                    choices=fin_choices,
+                    value=[x for x in ft_ids if x in {v for _, v in fin_choices}],
+                    multiselect=True,
+                    filterable=True,
+                )
+                pack_details = gr.Markdown(
+                    _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog())
+                    if active
+                    else ""
+                )
+                pack_delete_fins = gr.Button("Delete selected recipes/weights")
+            with gr.Tab("CivitAI"):
+                token_state = (
+                    "configured"
+                    if CIVITAI_API_KEY
+                    else "not configured - public files still download"
+                )
+                gr.Markdown(
+                    "CivitAI is a separate opt-in. It uses `civitai.red` for adult "
+                    f"content. API token: **{token_state}**. Add `civitai_api_key` "
+                    "to the plugin's `config.json` for gated releases."
+                )
+                pack_civ_enabled = gr.Checkbox(
+                    label="Enable CivitAI downloads",
+                    value=bool(state.get("civitaiEnabled")),
+                )
+                with gr.Column(visible=civ_active) as pack_civ_body:
+                    pack_civ_sel = gr.Dropdown(
+                        label="CivitAI releases",
+                        choices=civ_choices,
+                        value=[x for x in civ_ids if x in {v for _, v in civ_choices}],
+                        multiselect=True,
+                        filterable=True,
+                    )
+                    pack_civ_download = gr.Button(
+                        "Download CivitAI selected", variant="primary"
+                    )
+                    pack_delete_civ = gr.Button("Delete selected CivitAI")
+                    pack_civ_status = gr.Markdown("")
+            with gr.Tab("Updates"):
+                gr.Markdown(
+                    "Compare local files with the catalog, then with what the "
+                    "sources serve today. **Check online** reads each repo's live "
+                    "file size and hash; **Apply selected** pins them; "
+                    "**Download selected** fetches the new bytes."
+                )
+                with gr.Row():
+                    pack_live_updates = gr.Button("Check online", variant="primary")
+                    pack_apply_updates = gr.Button("Apply selected")
+                    pack_download_updates = gr.Button("Download selected")
+                update_sel = gr.Dropdown(
+                    label="Update items",
+                    choices=[],
+                    multiselect=True,
+                    filterable=True,
+                )
+                pack_update = gr.Markdown("")
+        pack_log = gr.Textbox(label="Pack log", lines=10, interactive=False)
+
+        all_inputs = [
+            pack_enabled,
+            pack_age,
+            pack_civ_enabled,
+            pack_lora_sel,
+            pack_ft_sel,
+            pack_civ_sel,
+        ]
+
+        def _gate(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel):
+            _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel)
+            on = bool(enabled and age)
+            return (
+                gr.update(visible=on),
+                gr.update(visible=bool(on and civ_enabled)),
+                "**Adult pack enabled.** Nothing downloads until you press a download button."
+                if on
+                else "The adult pack is off. Tick both boxes to show the catalog.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog())
+                if on
+                else "",
+            )
+
+        def _save(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel):
+            _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel)
+
+        pack_enabled.change(_gate, inputs=all_inputs, outputs=[pack_body, pack_civ_body, pack_gate_msg, pack_status])
+        pack_age.change(_gate, inputs=all_inputs, outputs=[pack_body, pack_civ_body, pack_gate_msg, pack_status])
+        pack_civ_enabled.change(_gate, inputs=all_inputs, outputs=[pack_body, pack_civ_body, pack_gate_msg, pack_status])
+        pack_lora_sel.change(_save, inputs=all_inputs, outputs=[])
+        pack_ft_sel.change(_save, inputs=all_inputs, outputs=[])
+        pack_civ_sel.change(_save, inputs=all_inputs, outputs=[])
+
+        def _defaults():
+            loras = [str(x.get("id")) for x in manifest.get("loras", []) if x.get("defaultSelected")]
+            loras = fm_pack.selected_ids_with_pairs(manifest, loras)
+            fins = [str(x.get("id")) for x in manifest.get("finetunes", []) if x.get("defaultSelected")]
+            civs = [str(x.get("id")) for x in manifest.get("civitai", []) if x.get("defaultSelected")]
+            _state_from(
+                state.get("enabled"),
+                state.get("ageConfirmed"),
+                state.get("civitaiEnabled"),
+                loras,
+                fins,
+                civs,
+            )
+            return (
+                gr.update(value=loras),
+                gr.update(value=fins),
+                gr.update(value=civs),
+                "Recommended selection loaded. Review it, then download.",
+            )
+
+        pack_defaults.click(
+            _defaults,
+            inputs=[],
+            outputs=[pack_lora_sel, pack_ft_sel, pack_civ_sel, pack_log],
+        )
+
+        def _refresh():
+            return (
+                _pack_status_md(
+                    manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state,
+                    custom=_catalog(),
+                ),
+                _pack_details_md(
+                    manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state,
+                    custom=_catalog(),
+                ),
+                _pack_inventory_md(plugin),
+                *_cat_snapshot("", "all", "all", ""),
+            )
+
+        pack_refresh.click(
+            _refresh,
+            inputs=[],
+            outputs=[
+                pack_status, pack_details, pack_inv,
+                cat_table, cat_pick, cat_detail, cat_media,
+            ],
+        )
+        pack_inv_btn.click(
+            _refresh,
+            inputs=[],
+            outputs=[
+                pack_status, pack_details, pack_inv,
+                cat_table, cat_pick, cat_detail, cat_media,
+            ],
+        )
+
+        def _download(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel, progress=gr.Progress()):
+            if not (enabled and age):
+                return "Enable the 18+ gate first.", "", "", ""
+            _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel)
+            lora_ids = fm_pack.selected_ids_with_pairs(_catalog(), lora_sel or [])
+            ft_ids = [str(x) for x in (ft_sel or [])]
+            civ_ids = [str(x) for x in (civ_sel or [])] if civ_enabled else []
+            loras = {str(x.get("id")): x for x in _catalog().get("loras", [])}
+            fins = {str(x.get("id")): x for x in _catalog().get("finetunes", [])}
+            civs = {str(x.get("id")): x for x in _catalog().get("civitai", [])}
+            total = fm_pack.selected_total_bytes(_catalog(), lora_ids, ft_ids)
+            for ident in civ_ids:
+                total += int((civs.get(ident) or {}).get("bytesEstimate") or 0)
+            done = 0
+            log: list[str] = []
+
+            def cb(n, _t, label):
+                nonlocal done
+                progress(
+                    (min(done + int(n or 0), total or done + int(n or 0)), total or done + int(n or 0)),
+                    desc=label,
+                )
+
+            for ident in lora_ids:
+                entry = loras.get(ident)
+                if not entry:
+                    continue
+                try:
+                    res = fm_pack.fetch_lora(
+                        entry,
+                        lora_dir_for,
+                        token=CIVITAI_API_KEY,
+                        progress=cb,
+                        pins=state.get("pins"),
+                    )
+                    done += int(res.get("bytes") or 0)
+                    log.append(f"[OK] LoRA {entry.get('name')}: {res.get('status')}")
+                except Exception as exc:
+                    log.append(f"[FAIL] LoRA {entry.get('name')}: {exc}")
+            for ident in ft_ids:
+                entry = fins.get(ident)
+                if not entry:
+                    continue
+                results = fm_pack.fetch_finetune(
+                    entry,
+                    ckpts_dir(),
+                    token=CIVITAI_API_KEY,
+                    progress=cb,
+                    pins=state.get("pins"),
+                )
+                for res in results:
+                    done += int(res.get("bytes") or 0)
+                    if res.get("ok") is False or res.get("error"):
+                        log.append(f"[FAIL] {entry.get('name')}: {res.get('error')}")
+                    else:
+                        log.append(f"[OK] {entry.get('name')}: {res.get('status')}")
+            for ident in civ_ids:
+                spec = civs.get(ident)
+                if not spec:
+                    continue
+                try:
+                    res = fm_pack.fetch_civitai(
+                        spec,
+                        ckpts_dir=ckpts_dir(),
+                        lora_dir_for=lora_dir_for,
+                        finetunes_dir=finetunes_dir,
+                        site="civitai.red",
+                        token=CIVITAI_API_KEY,
+                        progress=cb,
+                        pinned=(state.get("civitaiPinned") or {}).get(ident),
+                    )
+                    done += int(res.get("bytes") or 0)
+                    state.setdefault("civitaiPinned", {})[ident] = res.get("versionId")
+                    state.setdefault("civitaiInstalled", {})[ident] = {
+                        "files": res.get("paths") or [],
+                        "kind": res.get("kind"),
+                        "bytes": res.get("bytes") or 0,
+                        "versionId": res.get("versionId"),
+                    }
+                    log.append(f"[OK] CivitAI {spec.get('name')}: {res.get('kind')}")
+                except Exception as exc:
+                    log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
+            fm_pack.save_state(state, _pack_state_path)
+            return (
+                "\n".join(log) or "Nothing selected.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                "",
+            )
+
+        pack_download.click(
+            _download,
+            inputs=all_inputs,
+            outputs=[pack_log, pack_status, pack_details, pack_civ_status],
+            show_progress="full",
+        )
+
+        def _recipes(enabled, age, ft_sel):
+            if not (enabled and age):
+                return "Enable the 18+ gate first.", "", "", ""
+            fins = {str(x.get("id")): x for x in _catalog().get("finetunes", [])}
+            log: list[str] = []
+            for ident in [str(x) for x in (ft_sel or [])]:
+                entry = fins.get(ident)
+                if not entry:
+                    continue
+                try:
+                    p = fm_pack.write_recipe(entry, finetunes_dir)
+                    log.append(f"[OK] wrote {p}")
+                except Exception as exc:
+                    log.append(f"[FAIL] {entry.get('name')}: {exc}")
+            return (
+                "\n".join(log) or "Nothing selected.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                "",
+            )
+
+        pack_recipes.click(
+            _recipes,
+            inputs=[pack_enabled, pack_age, pack_ft_sel],
+            outputs=[pack_log, pack_status, pack_details, pack_civ_status],
+        )
+
+        def _civ_download(enabled, age, civ_enabled, civ_sel, progress=gr.Progress()):
+            if not (enabled and age):
+                return "Enable the 18+ gate first.", "", "", ""
+            if not civ_enabled:
+                return "Enable CivitAI downloads first.", "", "", ""
+            civs = {str(x.get("id")): x for x in _catalog().get("civitai", [])}
+            log: list[str] = []
+            for ident in [str(x) for x in (civ_sel or [])]:
+                spec = civs.get(ident)
+                if not spec:
+                    continue
+                try:
+                    res = fm_pack.fetch_civitai(
+                        spec,
+                        ckpts_dir=ckpts_dir(),
+                        lora_dir_for=lora_dir_for,
+                        finetunes_dir=finetunes_dir,
+                        site="civitai.red",
+                        token=CIVITAI_API_KEY,
+                        progress=lambda n, t, label: progress(
+                            (n, t or n), desc=label
+                        ),
+                        pinned=(state.get("civitaiPinned") or {}).get(ident),
+                    )
+                    state.setdefault("civitaiPinned", {})[ident] = res.get("versionId")
+                    state.setdefault("civitaiInstalled", {})[ident] = {
+                        "files": res.get("paths") or [],
+                        "kind": res.get("kind"),
+                        "bytes": res.get("bytes") or 0,
+                        "versionId": res.get("versionId"),
+                    }
+                    log.append(f"[OK] CivitAI {spec.get('name')}: {res.get('kind')}")
+                except Exception as exc:
+                    log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
+            fm_pack.save_state(state, _pack_state_path)
+            return (
+                "\n".join(log) or "Nothing selected.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                "\n".join(log) or "Nothing selected.",
+            )
+
+        pack_civ_download.click(
+            _civ_download,
+            inputs=[pack_enabled, pack_age, pack_civ_enabled, pack_civ_sel],
+            outputs=[pack_log, pack_status, pack_details, pack_civ_status],
+            show_progress="full",
+        )
+
+        def _delete_loras(enabled, age, lora_sel):
+            if not (enabled and age):
+                return "Enable the 18+ gate first.", "", "", ""
+            loras = {str(x.get("id")): x for x in _catalog().get("loras", [])}
+            log: list[str] = []
+            for ident in fm_pack.selected_ids_with_pairs(_catalog(), lora_sel or []):
+                entry = loras.get(ident)
+                if not entry:
+                    continue
+                try:
+                    res = fm_pack.delete_lora(entry, lora_dir_for)
+                    if res.get("removed"):
+                        log.append(f"[OK] deleted {entry.get('name')}")
+                    else:
+                        log.append(f"[SKIP] {entry.get('name')}: not present")
+                except Exception as exc:
+                    log.append(f"[FAIL] {entry.get('name')}: {exc}")
+            fm_pack.save_state(state, _pack_state_path)
+            return (
+                "\n".join(log) or "Nothing selected.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _fmt_update_report(
+                    fm_pack.update_report(
+                        manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state
+                    )
+                ),
+            )
+
+        pack_delete_loras.click(
+            _delete_loras,
+            inputs=[pack_enabled, pack_age, pack_lora_sel],
+            outputs=[pack_log, pack_status, pack_details, pack_update],
+        )
+
+        def _delete_fins(enabled, age, ft_sel):
+            if not (enabled and age):
+                return "Enable the 18+ gate first.", "", "", ""
+            fins = {str(x.get("id")): x for x in _catalog().get("finetunes", [])}
+            log: list[str] = []
+            for ident in [str(x) for x in (ft_sel or [])]:
+                entry = fins.get(ident)
+                if not entry:
+                    continue
+                try:
+                    res = fm_pack.delete_finetune(entry, ckpts_dir(), finetunes_dir)
+                    parts = []
+                    if res.get("removedRecipe"):
+                        parts.append("recipe")
+                    if res.get("removedWeights"):
+                        parts.append(f"{len(res['removedWeights'])} weight(s)")
+                    log.append(
+                        f"[OK] {entry.get('name')}: deleted {', '.join(parts) if parts else 'nothing present'}"
+                    )
+                except Exception as exc:
+                    log.append(f"[FAIL] {entry.get('name')}: {exc}")
+            return (
+                "\n".join(log) or "Nothing selected.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _fmt_update_report(
+                    fm_pack.update_report(
+                        manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state
+                    )
+                ),
+            )
+
+        pack_delete_fins.click(
+            _delete_fins,
+            inputs=[pack_enabled, pack_age, pack_ft_sel],
+            outputs=[pack_log, pack_status, pack_details, pack_update],
+        )
+
+        def _delete_civ(enabled, age, civ_enabled, civ_sel):
+            if not (enabled and age):
+                return "Enable the 18+ gate first.", "", "", ""
+            if not civ_enabled:
+                return "Enable CivitAI downloads first.", "", "", ""
+            civs = {str(x.get("id")): x for x in _catalog().get("civitai", [])}
+            log: list[str] = []
+            for ident in [str(x) for x in (civ_sel or [])]:
+                spec = civs.get(ident)
+                if not spec:
+                    continue
+                try:
+                    res = fm_pack.delete_civitai(
+                        spec, state, ckpts_dir(), lora_dir_for, finetunes_dir
+                    )
+                    parts = []
+                    if res.get("removedFiles"):
+                        parts.append(f"{len(res['removedFiles'])} file(s)")
+                    if res.get("removedRecipe"):
+                        parts.append("recipe")
+                    log.append(
+                        f"[OK] {spec.get('name')}: deleted {', '.join(parts) if parts else 'nothing present'}"
+                    )
+                except Exception as exc:
+                    log.append(f"[FAIL] {spec.get('name')}: {exc}")
+            fm_pack.save_state(state, _pack_state_path)
+            return (
+                "\n".join(log) or "Nothing selected.",
+                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
+                _fmt_update_report(
+                    fm_pack.update_report(
+                        manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state
+                    )
+                ),
+            )
+
+        pack_delete_civ.click(
+            _delete_civ,
+            inputs=[pack_enabled, pack_age, pack_civ_enabled, pack_civ_sel],
+            outputs=[pack_log, pack_status, pack_details, pack_update],
+        )
+
+        def _check_updates(verify):
+            report = fm_pack.update_report(
+                manifest,
+                ckpts_dir(),
+                lora_dir_for,
+                finetunes_dir,
+                state,
+                verify_hashes=bool(verify),
+                custom=_catalog(),
+            )
+            return _fmt_update_report(report)
+
+        pack_check_updates.click(
+            _check_updates,
+            inputs=[pack_verify_hashes],
+            outputs=[pack_update],
+        )
+
+        # -- Updates: compare with the live sources, pin, download -------
+        def _fetch_one(row, progress):
+            """Download one catalog row; mirrors the Catalog tab action."""
+            entry = row["entry"]
+            if row["kind"] == "LoRA":
+                res = fm_pack.fetch_lora(
+                    entry,
+                    lora_dir_for,
+                    token=CIVITAI_API_KEY,
+                    pins=state.get("pins"),
+                    progress=lambda n, t, label: progress((n, t or n), desc=label),
+                )
+                return f"[OK] {entry.get('name')}: {res.get('status')}"
+            if row["kind"] == "Checkpoint":
+                results = fm_pack.fetch_finetune(
+                    entry,
+                    ckpts_dir(),
+                    token=CIVITAI_API_KEY,
+                    pins=state.get("pins"),
+                    progress=lambda n, t, label: progress((n, t or n), desc=label),
+                )
+                failed = [r for r in results if r.get("ok") is False or r.get("error")]
+                if failed:
+                    raise RuntimeError(str(failed[0].get("error")))
+                return f"[OK] {entry.get('name')}: weights present"
+            res = fm_pack.fetch_civitai(
+                entry,
+                ckpts_dir=ckpts_dir(),
+                lora_dir_for=lora_dir_for,
+                finetunes_dir=finetunes_dir,
+                site="civitai.red",
+                token=CIVITAI_API_KEY,
+                progress=lambda n, t, label: progress((n, t or n), desc=label),
+                pinned=(state.get("civitaiPinned") or {}).get(row["id"]),
+            )
+            state.setdefault("civitaiPinned", {})[row["id"]] = res.get("versionId")
+            state.setdefault("civitaiInstalled", {})[row["id"]] = {
+                "files": res.get("paths") or [],
+                "kind": res.get("kind"),
+                "bytes": res.get("bytes") or 0,
+                "versionId": res.get("versionId"),
+            }
+            return f"[OK] {entry.get('name')}: {res.get('kind')}"
+
+        def _entry_rows():
+            rows, _cat = _rows_now()
+            return {r["id"]: r for r in rows}
+
+        def _live_updates():
+            report = fm_pack.live_update_report(
+                _catalog(),
+                ckpts_dir(),
+                lora_dir_for,
+                finetunes_dir,
+                state,
+                token=CIVITAI_API_KEY,
+            )
+            changed = [r for r in report.get("items", []) if r.get("status") != "current"]
+            choices = [
+                (f"{r.get('name')} - {r.get('kind')} - {r.get('status')}", str(r.get("id")))
+                for r in changed
+            ]
+            return _fmt_live_report(report), gr.update(choices=choices, value=[])
+
+        pack_live_updates.click(
+            _live_updates,
+            inputs=[],
+            outputs=[pack_update, update_sel],
+        )
+
+        def _apply_updates(ids):
+            ids = [str(x) for x in (ids or [])]
+            if not ids:
+                return "Pick update items first.", *_cat_snapshot("", "all", "all", "")
+            applied = fm_pack.apply_updates(state, ids)
+            fm_pack.save_state(state, _pack_state_path)
+            lines = [
+                f"[PIN] {k} -> {v.get('sha256', '')[:12]} ({v.get('bytes')} B)"
+                for k, v in sorted((applied.get("pins") or {}).items())
+            ]
+            lines += [
+                f"[PIN] civitai {k} -> v{v}"
+                for k, v in sorted((applied.get("civitaiPinned") or {}).items())
+            ]
+            for skip in applied.get("skipped") or []:
+                lines.append(f"[SKIP] {skip.get('id')}: {skip.get('reason')}")
+            if not (applied.get("applied") or applied.get("skipped")):
+                lines.append("Nothing to pin - run Check online first.")
+            return (
+                "\n".join(lines),
+                *_cat_snapshot("", "all", "all", ""),
+            )
+
+        pack_apply_updates.click(
+            _apply_updates,
+            inputs=[update_sel],
+            outputs=[pack_update, cat_table, cat_pick, cat_detail, cat_media],
+        )
+
+        def _download_updates(ids, progress=gr.Progress()):
+            ids = [str(x) for x in (ids or [])]
+            if not ids:
+                return "Pick update items first.", *_cat_snapshot("", "all", "all", "")
+            rows = _entry_rows()
+            log: list[str] = []
+            for raw in ids:
+                row = rows.get(str(raw).partition("#")[0])
+                if not row:
+                    log.append(f"[SKIP] {raw}: not in the catalog")
+                    continue
+                try:
+                    log.append(_fetch_one(row, progress))
+                except Exception as exc:
+                    log.append(f"[FAIL] {row.get('name')}: {exc}")
+            fm_pack.save_state(state, _pack_state_path)
+            return (
+                "\n".join(log) or "Nothing to download.",
+                *_cat_snapshot("", "all", "all", ""),
+            )
+
+        pack_download_updates.click(
+            _download_updates,
+            inputs=[update_sel],
+            outputs=[pack_update, cat_table, cat_pick, cat_detail, cat_media],
+            show_progress="full",
+        )
+
+        # ── Catalog: filter, select one item, act on it ──────────────────
+        def _rows_now():
+            cat = _catalog()
+            st = fm_pack.catalog_status(
+                manifest,
+                ckpts_dir(),
+                lora_dir_for,
+                finetunes_dir,
+                state,
+                custom=cat,
+            )
+            return _pack_catalog_rows(st, cat), cat
+
+        def _cat_snapshot(query, family, show, pick):
+            rows, _cat = _rows_now()
+            shown = _filter_catalog_rows(rows, query, family, show)
+            choices = _pack_pick_choices(shown)
+            valid = {value for _, value in choices}
+            pick = pick if pick in valid else None
+            row = next((r for r in shown if r["pick"] == pick), None)
+            media = (
+                _pack_media_html([row["entry"].get("preview")], row.get("name"))
+                if row
+                else ""
+            )
+            return (
+                _pack_table_value(shown),
+                gr.update(choices=choices, value=pick),
+                _pack_detail_md(row),
+                media,
+            )
+
+        def _cat_filter(query, family, show, pick):
+            return _cat_snapshot(query, family, show, pick)
+
+        cat_q.change(
+            _cat_filter,
+            inputs=[cat_q, cat_family, cat_show, cat_pick],
+            outputs=[cat_table, cat_pick, cat_detail, cat_media],
+        )
+        cat_family.change(
+            _cat_filter,
+            inputs=[cat_q, cat_family, cat_show, cat_pick],
+            outputs=[cat_table, cat_pick, cat_detail, cat_media],
+        )
+        cat_show.change(
+            _cat_filter,
+            inputs=[cat_q, cat_family, cat_show, cat_pick],
+            outputs=[cat_table, cat_pick, cat_detail, cat_media],
+        )
+
+        def _cat_select(pick):
+            rows, _cat = _rows_now()
+            row = next((r for r in rows if r["pick"] == pick), None)
+            return (
+                _pack_detail_md(row),
+                _pack_media_html([row["entry"].get("preview")], row.get("name"))
+                if row
+                else "",
+            )
+
+        cat_pick.change(
+            _cat_select,
+            inputs=[cat_pick],
+            outputs=[cat_detail, cat_media],
+        )
+
+        def _cat_row(pick):
+            rows, cat = _rows_now()
+            return next((r for r in rows if r["pick"] == pick), None), cat
+
+        def _cat_download_one(pick, query, family, show, progress=gr.Progress()):
+            row, _cat = _cat_row(pick)
+            if not row:
+                return "Pick an item first.", *_cat_snapshot(query, family, show, pick)
+            try:
+                msg = _fetch_one(row, progress)
+                fm_pack.save_state(state, _pack_state_path)
+            except Exception as exc:
+                msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
+            return (
+                msg,
+                *_cat_snapshot(query, family, show, pick),
+            )
+
+        cat_download.click(
+            _cat_download_one,
+            inputs=[cat_pick, cat_q, cat_family, cat_show],
+            outputs=[cat_log, cat_table, cat_pick, cat_detail, cat_media],
+            show_progress="full",
+        )
+
+        def _cat_recipe_one(pick, query, family, show):
+            row, _cat = _cat_row(pick)
+            if not row:
+                return "Pick a checkpoint first.", *_cat_snapshot(query, family, show, pick)
+            if row["kind"] != "Checkpoint":
+                return (
+                    "Recipes only exist for checkpoints.",
+                    *_cat_snapshot(query, family, show, pick),
+                )
+            try:
+                p = fm_pack.write_recipe(row["entry"], finetunes_dir)
+                msg = f"[OK] wrote {p}"
+            except Exception as exc:
+                msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
+            return (msg, *_cat_snapshot(query, family, show, pick))
+
+        cat_recipe.click(
+            _cat_recipe_one,
+            inputs=[cat_pick, cat_q, cat_family, cat_show],
+            outputs=[cat_log, cat_table, cat_pick, cat_detail, cat_media],
+        )
+
+        def _cat_delete_one(pick, query, family, show):
+            row, _cat = _cat_row(pick)
+            if not row:
+                return "Pick an item first.", *_cat_snapshot(query, family, show, pick)
+            entry = row["entry"]
+            try:
+                if row["kind"] == "LoRA":
+                    res = fm_pack.delete_lora(entry, lora_dir_for)
+                    done = bool(res.get("removed"))
+                elif row["kind"] == "Checkpoint":
+                    res = fm_pack.delete_finetune(entry, ckpts_dir(), finetunes_dir)
+                    done = bool(res.get("removedWeights") or res.get("removedRecipe"))
+                else:
+                    res = fm_pack.delete_civitai(
+                        entry, state, ckpts_dir(), lora_dir_for, finetunes_dir
+                    )
+                    done = bool(res.get("removedFiles") or res.get("removedRecipe"))
+                if entry.get("custom"):
+                    fm_pack.drop_custom(row["id"])
+                    done = True
+                fm_pack.save_state(state, _pack_state_path)
+                msg = (
+                    f"[OK] {entry.get('name')}: deleted"
+                    if done
+                    else f"[SKIP] {entry.get('name')}: nothing present"
+                )
+            except Exception as exc:
+                msg = f"[FAIL] {entry.get('name')}: {exc}"
+            return (
+                msg,
+                *_cat_snapshot(query, family, show, "" if entry.get("custom") else pick),
+            )
+
+        cat_delete.click(
+            _cat_delete_one,
+            inputs=[cat_pick, cat_q, cat_family, cat_show],
+            outputs=[cat_log, cat_table, cat_pick, cat_detail, cat_media],
+        )
+
+        def _cat_gallery(pick):
+            row, _cat = _cat_row(pick)
+            if not row:
+                return "", "Pick an item first."
+            entry = row["entry"]
+            urls = []
+            if entry.get("preview"):
+                urls.append(entry["preview"])
+            try:
+                if row["kind"] == "CivitAI":
+                    data = fm_pack.civitai_gallery(entry, token=CIVITAI_API_KEY)
+                    urls += [x.get("url") for x in data.get("images") or []]
+                else:
+                    repo = str(entry.get("repo") or "")
+                    if not repo:
+                        page = str(entry.get("repoPage") or "")
+                        marker = "huggingface.co/"
+                        if marker in page:
+                            repo = page.split(marker, 1)[1].split("/")[:2]
+                            repo = "/".join(repo)
+                    if repo:
+                        data = fm_pack.hf_gallery(repo)
+                        urls += [x.get("url") for x in data.get("images") or []]
+                        urls += [x.get("url") for x in data.get("videos") or []]
+                html_out = _pack_media_html(urls, row.get("name"))
+                return (
+                    html_out,
+                    "" if html_out else "No gallery images found for this item.",
+                )
+            except Exception as exc:
+                return "", f"[FAIL] gallery: {exc}"
+
+        cat_gallery.click(
+            _cat_gallery,
+            inputs=[cat_pick],
+            outputs=[cat_media, cat_log],
+        )
+
+        # ── Find & Add ──────────────────────────────────────────────────
+        find_items_state = gr.State([])
+        find_info_state = gr.State({})
+
+        def _find_run(source, mode, query, kind, sort, period, limit):
+            try:
+                if mode == "browse":
+                    items = (
+                        fm_pack.civitai_browse(
+                            manifest,
+                            sort=sort,
+                            period=period,
+                            kind=kind,
+                            limit=int(limit),
+                            token=CIVITAI_API_KEY,
+                        )
+                        if source == "civitai"
+                        else fm_pack.hf_browse(
+                            manifest, sort=sort, kind=kind, limit=int(limit)
+                        )
+                    )
+                else:
+                    items = (
+                        fm_pack.civitai_search(
+                            manifest,
+                            query,
+                            kind=kind,
+                            limit=int(limit),
+                            token=CIVITAI_API_KEY,
+                        )
+                        if source == "civitai"
+                        else fm_pack.hf_search(
+                            manifest, query, kind=kind, limit=int(limit)
+                        )
+                    )
+            except Exception as exc:
+                return (
+                    [],
+                    [],
+                    gr.update(choices=[], value=None),
+                    f"[FAIL] {exc}",
+                )
+            rows = [
+                [
+                    x.get("title") or "",
+                    x.get("family") or "",
+                    x.get("architecture") or "",
+                    x.get("downloads") or 0,
+                    x.get("updated") or x.get("releasedAt") or "",
+                    x.get("id"),
+                ]
+                for x in items
+            ]
+            choices = [
+                (f"{x.get('title')} - {x.get('family')} - {x.get('architecture')}", str(i))
+                for i, x in enumerate(items)
+            ]
+            note = (
+                "Nothing matched - try a broader query or another type."
+                if not items
+                else f"{len(items)} result(s). Pick one, then Inspect."
+            )
+            return items, rows, gr.update(choices=choices, value=None), note
+
+        find_run.click(
+            _find_run,
+            inputs=[
+                find_source,
+                find_mode,
+                find_query,
+                find_kind,
+                find_sort,
+                find_period,
+                find_limit,
+            ],
+            outputs=[find_items_state, find_table, find_pick, find_status],
+        )
+
+        def _find_inspect(idx, items, arch, version):
+            try:
+                item = (items or [])[int(idx)]
+            except Exception:
+                return (
+                    {},
+                    [],
+                    gr.update(choices=[], value=None),
+                    gr.update(choices=[], value=None),
+                    "",
+                    gr.update(),
+                    "Pick a result first.",
+                )
+            chosen_arch = str(arch or item.get("architecture") or "")
+            try:
+                info = fm_pack.inspect_source(
+                    manifest,
+                    item.get("source"),
+                    str(item.get("id")),
+                    architecture=chosen_arch,
+                    version=version or item.get("versionId"),
+                    token=CIVITAI_API_KEY,
+                )
+            except Exception as exc:
+                return (
+                    {},
+                    [],
+                    gr.update(choices=[], value=None),
+                    gr.update(choices=[], value=None),
+                    "",
+                    gr.update(),
+                    f"[FAIL] {exc}",
+                )
+            files = info.get("files") or []
+            rows = [
+                [
+                    f.get("file"),
+                    f.get("kind"),
+                    fm_pack.human_bytes(f.get("bytes") or 0),
+                    f.get("pair") or "",
+                    str(f.get("sha256") or "")[:16],
+                ]
+                for f in files
+            ]
+            file_choices = [
+                (
+                    f"{f.get('file')} - {f.get('kind')} - "
+                    f"{fm_pack.human_bytes(f.get('bytes') or 0)}",
+                    str(i),
+                )
+                for i, f in enumerate(files)
+            ]
+            versions = info.get("versions") or []
+            version_choices = [
+                (
+                    f"{v.get('name') or v.get('id')} - {v.get('baseModel') or ''} "
+                    f"({v.get('fileCount')} file(s))",
+                    str(v.get("id")),
+                )
+                for v in versions
+            ]
+            urls = [info.get("preview")] + [
+                x.get("url") for x in info.get("samples") or []
+            ]
+            note = (
+                f"{info.get('title')} - {len(files)} loadable file(s). "
+                "Pick a file, then Add."
+                if files
+                else "No loadable files found (needs .safetensors or .gguf)."
+            )
+            return (
+                info,
+                rows,
+                gr.update(choices=file_choices, value=None),
+                gr.update(
+                    choices=version_choices,
+                    value=str(info.get("versionId") or "") or None,
+                ),
+                _pack_media_html(urls, info.get("title")),
+                gr.update(value=chosen_arch if chosen_arch in arch_values else None),
+                note,
+            )
+
+        find_inspect.click(
+            _find_inspect,
+            inputs=[find_pick, find_items_state, find_arch, find_version],
+            outputs=[
+                find_info_state,
+                find_files,
+                find_file_pick,
+                find_version,
+                find_media,
+                find_arch,
+                find_status,
+            ],
+        )
+        find_version.change(
+            _find_inspect,
+            inputs=[find_pick, find_items_state, find_arch, find_version],
+            outputs=[
+                find_info_state,
+                find_files,
+                find_file_pick,
+                find_version,
+                find_media,
+                find_arch,
+                find_status,
+            ],
+        )
+
+        def _find_add(info, file_idx, kind_override, arch):
+            if not info:
+                return "Inspect a result first.", *_cat_snapshot("", "all", "all", "")
+            files = info.get("files") or []
+            try:
+                f = files[int(file_idx)]
+            except Exception:
+                return "Pick a file first.", *_cat_snapshot("", "all", "all", "")
+            chosen_arch = str(arch or info.get("architecture") or "")
+            if not chosen_arch:
+                return "Pick the Wan2GP architecture first.", *_cat_snapshot(
+                    "", "all", "all", ""
+                )
+            kind = f.get("kind") if kind_override == "auto" else kind_override
+            source = str(info.get("source") or "")
+            family = fm_pack.family_for_arch(manifest, chosen_arch)
+            if not family:
+                hit = fm_pack.match_arch(manifest, str(info.get("title") or ""))
+                family = str((hit or {}).get("id") or "")
+            try:
+                entry = fm_pack.build_custom_entry(
+                    source=source,
+                    title=str(info.get("title") or ""),
+                    file=str(f.get("file") or ""),
+                    url=str(f.get("url") or ""),
+                    architecture=chosen_arch,
+                    kind=str(kind or "checkpoint"),
+                    bytes=int(f.get("bytes") or 0),
+                    sha256=f.get("sha256"),
+                    repo=str(info.get("id") or "") if source == "hf" else "",
+                    repo_path=str(f.get("file") or ""),
+                    preview=str(info.get("preview") or ""),
+                    repo_page=str(info.get("repoPage") or ""),
+                    file_page="",
+                    wan2gp_ids=[chosen_arch],
+                    family=family,
+                    needs_token=bool(f.get("needsToken")),
+                )
+                fm_pack.add_custom(entry)
+                msg = (
+                    f"[OK] added {entry.get('name')} - fetch it from the Catalog tab."
+                )
+                pick = ("lora:" if entry.get("group") == "custom" else "finetune:") + str(
+                    entry.get("id")
+                )
+            except Exception as exc:
+                return f"[FAIL] {exc}", *_cat_snapshot("", "all", "all", "")
+            return (msg, *_cat_snapshot("", "all", "all", pick))
+
+        find_add.click(
+            _find_add,
+            inputs=[find_info_state, find_file_pick, find_kind_override, find_arch],
+            outputs=[
+                find_status,
+                cat_table,
+                cat_pick,
+                cat_detail,
+                cat_media,
+            ],
+        )
+
+        def _find_url_resolve(text, arch):
+            parsed = fm_pack.parse_source_url(text)
+            if not parsed:
+                return (
+                    {},
+                    [],
+                    gr.update(choices=[], value=None),
+                    gr.update(choices=[], value=None),
+                    "",
+                    None,
+                    "Paste a HuggingFace repo/URL, a CivitAI model URL, or a CivitAI model id.",
+                )
+            source, ident = parsed
+            try:
+                info = fm_pack.inspect_source(
+                    manifest,
+                    source,
+                    ident,
+                    architecture=str(arch or ""),
+                    token=CIVITAI_API_KEY,
+                )
+            except Exception as exc:
+                return (
+                    {},
+                    [],
+                    gr.update(choices=[], value=None),
+                    gr.update(choices=[], value=None),
+                    "",
+                    None,
+                    f"[FAIL] {exc}",
+                )
+            files = info.get("files") or []
+            rows = [
+                [
+                    f.get("file"),
+                    f.get("kind"),
+                    fm_pack.human_bytes(f.get("bytes") or 0),
+                    f.get("pair") or "",
+                    str(f.get("sha256") or "")[:16],
+                ]
+                for f in files
+            ]
+            file_choices = [
+                (
+                    f"{f.get('file')} - {f.get('kind')} - "
+                    f"{fm_pack.human_bytes(f.get('bytes') or 0)}",
+                    str(i),
+                )
+                for i, f in enumerate(files)
+            ]
+            version_choices = [
+                (
+                    f"{v.get('name') or v.get('id')} - {v.get('baseModel') or ''} "
+                    f"({v.get('fileCount')} file(s))",
+                    str(v.get("id")),
+                )
+                for v in info.get("versions") or []
+            ]
+            urls = [info.get("preview")] + [
+                x.get("url") for x in info.get("samples") or []
+            ]
+            note = (
+                f"Found {info.get('title')} ({source}) - {len(files)} file(s). "
+                "Pick one and Add, or change the architecture first."
+                if files
+                else "No loadable files found (needs .safetensors or .gguf)."
+            )
+            return (
+                info,
+                rows,
+                gr.update(choices=file_choices, value=None),
+                gr.update(
+                    choices=version_choices,
+                    value=str(info.get("versionId") or "") or None,
+                ),
+                _pack_media_html(urls, info.get("title")),
+                str(arch or info.get("architecture") or "") or None,
+                note,
+            )
+
+        find_url_btn.click(
+            _find_url_resolve,
+            inputs=[find_url, find_url_arch],
+            outputs=[
+                find_info_state,
+                find_files,
+                find_file_pick,
+                find_version,
+                find_media,
+                find_arch,
+                find_status,
+            ],
+        )
+
+    for line in manifest.get("legal", []):
+        gr.Markdown(f"- {line}")
+
+
 class FinetuneManagerPlugin(WAN2GPPlugin):
     def setup_ui(self):
         self.request_global("refresh_model_defs")
@@ -2220,6 +4006,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
         self.request_global("families_infos")
         self.request_global("get_model_family")
         self.request_global("list_model_defs")
+        self.request_global("get_lora_dir")
+        self.request_global("get_lora_root")
         self.request_component("state")
         self.request_component("model_choice_target")
         self.request_component("main_tabs")
@@ -2436,7 +4224,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         "",
                         html,
                         cnt,
-                        gr.update(choices=tags, value=""),
+                        gr.update(choices=tags, value=None),
                         gr.update(value=""),
                         gr.update(choices=_archs_for(fins, "All"), value="All"),
                         gr.update(choices=fam_choices, value="All"),
@@ -2500,7 +4288,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "Select a card first</div>"
                         )
                     all_entries = _collect_url_entries(detail)
-                    results = _validate_urls(all_entries)
+                    results = _validate_urls(all_entries, self)
                     return _build_url_validation_html(results)
 
                 b_validate_btn.click(
@@ -2519,7 +4307,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if isinstance(detail_raw, dict):
                         all_entries = _collect_url_entries(detail_raw)
                         val_html = _build_url_validation_html(
-                            _validate_urls(all_entries)
+                            _validate_urls(all_entries, self)
                         )
                     else:
                         val_html = ""
@@ -2632,6 +4420,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         f"Variant '{vid}' loaded into Create/Edit tab",
                         data,
                     ]
+
+            # ── PACK ──
+            with gr.TabItem("Pack", id="pack"):
+                _build_pack_tab(self)
 
             # ── CREATE / EDIT ──
             with gr.TabItem("Create / Edit", id="editor"):
@@ -3341,7 +5133,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         first_line = val.strip().split("\n")[0].strip()
                         if first_line.startswith("="):
                             mid = first_line[1:].strip()
-                            ok, msg = _validate_model_ref(mid)
+                            ok, msg = _validate_model_ref(mid, self)
                             icon = "\u2705" if ok else "\u274c"
                             val_results.append(
                                 gr.update(
@@ -3355,7 +5147,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             and not first_line.startswith(("http:", "https:", "."))
                             and not (len(first_line) > 1 and first_line[1] == ":")
                         ):
-                            ok, msg = _validate_model_ref(first_line)
+                            ok, msg = _validate_model_ref(first_line, self)
                             icon = "\u2705" if ok else "\u274c"
                             val_results.append(
                                 gr.update(
@@ -3454,10 +5246,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     return _sanitize_id(f"{src}_finetune" if src else "finetune")
 
                 def _unique_id(base):
-                    p = Path(FINETUNES_DIR)
-                    existing = (
-                        {f.stem for f in p.glob("*.json")} if p.exists() else set()
-                    )
+                    existing = _existing_finetune_stems()
                     c = base
                     i = 1
                     while c in existing:
@@ -3832,7 +5621,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if len(vals) > 4 and isinstance(vals[4], str) and vals[4].strip():
                         raw_entries.insert(0, f"={vals[4].strip()}")
                     # Aggregate results (for fin_validate_out)
-                    all_results = _validate_urls(raw_entries)
+                    all_results = _validate_urls(raw_entries, self)
                     aggregate_html = _build_url_validation_html(all_results)
                     # Per-field validation HTML (for each URL row's val element)
                     per_field = []
@@ -3848,7 +5637,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             continue
                         field_parts = []
                         for line in lines:
-                            valid, msg = _validate_entry(line)
+                            valid, msg = _validate_entry(line, self)
                             color = "#16a34a" if valid else "#dc2626"
                             icon = "\u2713" if valid else "\u2717"
                             field_parts.append(
@@ -3869,7 +5658,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if extra_data is not None:
                         vals = remaining
                     data = _build(*vals[1:], extra_data=extra_data)
-                    return _download_finetune_files(data)
+                    return _download_finetune_files(data, self)
 
                 fin_download_btn.click(
                     fn=_editor_download,
@@ -3893,7 +5682,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if current_clean == mid:
                             return (gr.update(), gr.update(), gr.update())
                         # Validate the model ref
-                        ok, msg = _validate_model_ref(mid)
+                        ok, msg = _validate_model_ref(mid, self)
                         icon = "\u2705" if ok else "\u274c"
                         val_html = f"<span style='font-size:12px'>{icon} {msg}</span>"
                         return (
@@ -3922,7 +5711,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     ):
                         mid = first_line
                     if mid:
-                        ok, msg = _validate_model_ref(mid)
+                        ok, msg = _validate_model_ref(mid, self)
                         icon = "\u2705" if ok else "\u274c"
                         val_html = f"<span style='font-size:12px'>{icon} {msg}</span>"
                         return (
@@ -4201,7 +5990,10 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return {"error": "not found"}
-                data = json.loads(p.read_text(encoding="utf-8"))
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError) as e:
+                    return {"error": f"invalid JSON: {e}"}
                 return _clean_utf8(data)
 
             def _scan_local_entries():
@@ -4218,6 +6010,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     except Exception as e:
                         entries.append({
                             "id": fid,
+                            "pack_id": fm_assets.pack_display_id(fid),
+                            "is_pack": fm_assets.is_pack_id(fid),
                             "name": fid,
                             "broken": f"Corrupt or invalid JSON: {e}",
                             "family": _FAMILY_UNKNOWN,
@@ -4228,6 +6022,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if err:
                         entries.append({
                             "id": fid,
+                            "pack_id": fm_assets.pack_display_id(fid),
+                            "is_pack": fm_assets.is_pack_id(fid),
                             "name": fid,
                             "broken": err,
                             "family": _FAMILY_UNKNOWN,
@@ -4238,6 +6034,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     family = _family_for_model(self, m)
                     entries.append({
                         "id": fid,
+                        "pack_id": fm_assets.pack_display_id(fid),
+                        "is_pack": fm_assets.is_pack_id(fid),
                         "name": m.get("name", fid),
                         "model": m,
                         "family": family,
@@ -4254,6 +6052,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         e for e in ff
                         if s in str(e.get("name", "")).casefold()
                         or s in str(e.get("id", "")).casefold()
+                        or s in str(e.get("pack_id", "")).casefold()
                         or s in str((e.get("model") or {}).get("description", "")).casefold()
                     ]
                 if family and family != "All":
@@ -4317,6 +6116,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             is_variant=bool(m.get("finetune_source_model")),
                             family_label=e.get("family_label", ""),
                             family_warning=e.get("family_warning", ""),
+                            is_pack=bool(e.get("is_pack")),
                         )
                     )
                 _h.append("</div>")
