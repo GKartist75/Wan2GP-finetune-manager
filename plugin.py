@@ -225,7 +225,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.7.4"
+PLUGIN_VERSION = "3.7.5"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -345,7 +345,7 @@ def _find_token_urls(data: dict) -> list[str]:
     if not isinstance(m, dict):
         return []
     found = []
-    for key in DOWNLOAD_URL_KEYS + ["loras"]:
+    for key in URL_VALIDATION_KEYS:
         vals = m.get(key, [])
         if isinstance(vals, str):
             vals = [vals]
@@ -407,6 +407,25 @@ def _unexpected_host_note(url: str) -> str:
     if host and not fm_security.host_allowed(host, EXPECTED_DOWNLOAD_HOSTS):
         return f"unexpected host '{host}' — verify it yourself"
     return ""
+
+
+def _upload_host_problem(data) -> str | None:
+    """Reject registry uploads whose download URLs use an unexpected host.
+
+    Downloads and local saves remain permissive with a warning badge; only
+    publishing to the shared registry is restricted to the usual hosts.
+    """
+    hosts = _unexpected_url_hosts(data)
+    if not hosts:
+        return None
+    shown = ", ".join(hosts[:4])
+    if len(hosts) > 4:
+        shown += f" +{len(hosts) - 4} more"
+    return (
+        "Registry uploads are limited to huggingface.co, hf.co, civitai.com "
+        f"and civitai.red (including subdomains); unexpected host(s): {shown}. "
+        "You can still save locally and use the entry yourself."
+    )
 
 
 # ── Registry cache: avoids redundant N+1 fetches on rapid Refresh ──
@@ -2272,6 +2291,18 @@ def _publish_family_index(api, plugin=None) -> None:
 def _hf_upload(fin_id, json_data, plugin=None):
     """Upload a finetune JSON to the HF Space.
     Tries direct commit first; falls back to PR for community submissions."""
+    err = _validate_finetune_data(json_data, registry=True)
+    if err:
+        raise ValueError(err)
+    host_problem = _upload_host_problem(json_data)
+    if host_problem:
+        raise ValueError(host_problem)
+    token_urls = _find_token_urls(json_data)
+    if token_urls:
+        raise ValueError(
+            f"{len(token_urls)} URL(s) embed a CivitAI API token (`token=`); "
+            "remove the token before uploading."
+        )
     from huggingface_hub import HfApi
     api = HfApi()
     if _REGISTRY_TOKEN_VALID:
@@ -5714,6 +5745,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if token_problem:
                         return token_problem
                     data = _build(*vals, extra_data=extra_data)
+                    err = _validate_finetune_data(data, registry=True)
+                    if err:
+                        return f"Cannot save & upload: {err}"
+                    host_problem = _upload_host_problem(data)
+                    if host_problem:
+                        return f"Cannot save & upload: {host_problem}"
                     bare_warnings = _check_bare_filenames(data)
                     if bare_warnings:
                         return "⚠️ Cannot save & upload:\n" + "\n".join(bare_warnings)
@@ -6624,6 +6661,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 err = _validate_finetune_data(data, registry=True)
                 if err:
                     return f"Cannot upload: {err}"
+                host_problem = _upload_host_problem(data)
+                if host_problem:
+                    return f"Cannot upload: {host_problem}"
                 token_urls = _find_token_urls(data)
                 if token_urls:
                     return (

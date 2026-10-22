@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.7.4 🧪
+# Wan2GP Finetune Manager Plugin v3.7.5 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.7.4** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.7.5** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Security and trust — verify every URL yourself
 
@@ -24,6 +24,9 @@ Before downloading anything:
 - Browse and Local badge any entry whose download host is outside those usual
   families with **check host: …**. It is a warning, not a block — open the URL
   and decide whether you trust that host.
+- **Publishing is stricter than downloading.** **Save & Upload** and **Upload to
+  Registry** reject recipes with an unexpected download host; those recipes can
+  still be saved and used locally, but cannot be added to the shared registry.
 - Check the **repository, path and filename**. Re-uploads, lookalike accounts and
   typosquatted hosts can carry the same display name and description.
 - Prefer entries with a **known SHA-256**, and verify it after download where the
@@ -176,7 +179,7 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # Plugin entry point and UI logic
-├── plugin_info.json     # Plugin metadata v3.7.4
+├── plugin_info.json     # Plugin metadata v3.7.5
 ├── fm_security.py       # URL policy, safe fetching, size limits
 ├── fm_assets.py         # Pack recipe/asset resolution
 ├── fm_pack.py           # Pack catalog, downloads, updates
@@ -213,6 +216,12 @@ Remove-Item -Recurse -Force .\__pycache__
 ```
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v3.7.5
+
+- **Uploads are host-restricted** — **Save & Upload** and **Upload to Registry** now reject download URLs outside Hugging Face/CivitAI. Other hosts can still be saved locally and show the `check host` badge.
+- **Strict validation for editor uploads** — **Save & Upload** now runs the same `_validate_finetune_data(..., registry=True)` check as the other upload paths, closing the gap where `http://` URLs could be published.
+- **Upload primitive re-checks** — `_hf_upload()` rejects unsafe recipes and embedded `token=` URLs before contacting Hugging Face.
 
 ## What's New in v3.7.4
 

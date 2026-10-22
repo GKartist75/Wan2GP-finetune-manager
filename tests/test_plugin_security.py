@@ -131,6 +131,109 @@ class HostWarningTests(unittest.TestCase):
         self.assertIn("evil.example", msg)
 
 
+class UploadHostGateTests(unittest.TestCase):
+    def test_upload_gate_rejects_unexpected_host(self):
+        data = {
+            "model": {
+                "architecture": "ltx2_22B",
+                "URLs": ["https://evil.example/model.safetensors"],
+            }
+        }
+        problem = plugin._upload_host_problem(data)
+        self.assertIn("Registry uploads are limited", problem or "")
+        self.assertIn("evil.example", problem or "")
+
+    def test_upload_gate_accepts_expected_hosts(self):
+        data = {
+            "model": {
+                "architecture": "ltx2_22B",
+                "URLs": ["https://huggingface.co/acme/model.safetensors"],
+                "loras": ["https://civitai.com/api/download/models/1"],
+            }
+        }
+        self.assertIsNone(plugin._upload_host_problem(data))
+
+    def test_download_validation_warns_but_does_not_block(self):
+        data = {
+            "model": {
+                "architecture": "ltx2_22B",
+                "URLs": ["https://evil.example/model.safetensors"],
+            }
+        }
+        self.assertIsNone(plugin._validate_finetune_data(data, registry=True))
+        self.assertEqual(plugin._unexpected_url_hosts(data), ["evil.example"])
+
+    def test_hf_upload_rejects_before_network(self):
+        with mock.patch("huggingface_hub.HfApi") as api:
+            with self.assertRaises(ValueError):
+                plugin._hf_upload(
+                    "entry",
+                    {
+                        "model": {
+                            "architecture": "ltx2_22B",
+                            "URLs": ["https://evil.example/model.safetensors"],
+                        }
+                    },
+                )
+            api.assert_not_called()
+
+    def test_hf_upload_rejects_http_before_network(self):
+        with mock.patch("huggingface_hub.HfApi") as api:
+            with self.assertRaises(ValueError):
+                plugin._hf_upload(
+                    "entry",
+                    {
+                        "model": {
+                            "architecture": "ltx2_22B",
+                            "URLs": ["http://huggingface.co/acme/model.safetensors"],
+                        }
+                    },
+                )
+            api.assert_not_called()
+
+    def test_hf_upload_rejects_embedded_token_before_network(self):
+        with mock.patch("huggingface_hub.HfApi") as api:
+            with self.assertRaises(ValueError):
+                plugin._hf_upload(
+                    "entry",
+                    {
+                        "model": {
+                            "architecture": "ltx2_22B",
+                            "URLs": [
+                                "https://civitai.com/api/download/models/1?token=secret"
+                            ],
+                        }
+                    },
+                )
+            api.assert_not_called()
+
+    def test_token_scan_covers_source_model_field(self):
+        data = {
+            "model": {
+                "finetune_source_model": (
+                    "https://civitai.com/api/download/models/1?token=secret"
+                )
+            }
+        }
+        found = plugin._find_token_urls(data)
+        self.assertEqual(len(found), 1)
+        self.assertIn("finetune_source_model", found[0])
+
+    def test_hf_upload_allows_expected_host(self):
+        data = {
+            "model": {
+                "architecture": "ltx2_22B",
+                "URLs": ["https://huggingface.co/acme/model.safetensors"],
+            }
+        }
+        with mock.patch("huggingface_hub.HfApi") as api_cls, mock.patch.object(
+            plugin, "_publish_family_index"
+        ) as publish:
+            plugin._hf_upload("entry", data)
+        api_cls.return_value.upload_file.assert_called_once()
+        publish.assert_called_once()
+
+
 class MarkdownSafetyTests(unittest.TestCase):
     def test_pack_cells_escape_html_and_pipes(self):
         value = plugin._pack_md_cell("<img src=x>|next")

@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.7.5 (2026-10-22)
+
+### Security
+- **Registry upload host gate** - `_hf_upload()` now validates the recipe and rejects any download URL outside `huggingface.co`, `hf.co`, `civitai.com`, `civitai.red` and their subdomains. Editor **Save & Upload** and Local **Upload to Registry** check before writing or uploading.
+- **Save & Upload validation gap** - the editor upload path previously checked only bare filenames; it now runs the same strict registry validation as the other upload paths. `http://` and unsafe recipes can no longer bypass the upload gate.
+- **Token guard in the upload primitive** - `_hf_upload()` also rejects URLs containing `token=`, so no caller can publish an embedded CivitAI key. The token scan now covers every URL field, including `finetune_source_model`.
+- **Downloading stays permissive** - Browse and Local still show a warning badge for unexpected hosts instead of blocking; only publishing to the shared registry is restricted.
+
+### Tests
+- Added upload-gate tests for unexpected hosts, accepted hosts, plain HTTP, embedded tokens, and the no-network rejection path.
+
+### Changed
+- Bumped version to 3.7.5 (plugin.py, plugin_info.json, README, user guide).
+
 ## v3.7.4 (2026-10-22)
 
 ### Added

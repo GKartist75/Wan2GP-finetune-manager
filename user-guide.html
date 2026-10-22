@@ -207,6 +207,7 @@
     <h3><span>🔎</span> Before you download</h3>
     <ul class="step-list">
       <li>Open the details and confirm every URL starts with <code>https://</code> and uses a host you expect, normally <code>huggingface.co</code>, <code>civitai.com</code> or <code>civitai.red</code>. Browse and Local badge other download hosts with <strong>check host: …</strong> — it is a warning, not a block.</li>
+      <li><strong>Publishing is stricter:</strong> <strong>Save &amp; Upload</strong> and <strong>Upload to Registry</strong> reject recipes whose download URLs use another host. Save them locally if you still want to use them yourself.</li>
       <li>Check the repository, path and filename. Lookalike accounts and re-uploads can reuse the same name and description.</li>
       <li>Prefer entries that publish a SHA-256, and verify it where the host provides one. A matching hash proves the bytes match; it does not prove they are safe.</li>
       <li>Treat <code>.ckpt</code>, <code>.pt</code>, <code>.pth</code>, <code>.bin</code>, <code>.gguf</code> and <code>.safetensors</code> files from strangers with caution. Do not load one just because it is listed here.</li>
@@ -414,7 +415,7 @@
 </div>
 
 <div class="footer">
-  Finetune Manager v3.7.4 — Wan2GP plugin by GKartist75
+  Finetune Manager v3.7.5 — Wan2GP plugin by GKartist75
 </div>
 
 </div>

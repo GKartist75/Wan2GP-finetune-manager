@@ -28,6 +28,9 @@ Before downloading:
 - Verify every URL starts with `https://` and uses a host you expect, normally
   `huggingface.co`, `civitai.com` or `civitai.red`.
 - Check the repository, path and filename for lookalike accounts or re-uploads.
+- Registry uploads made through the Finetune Manager are restricted to the
+  usual Hugging Face and CivitAI hosts; other hosts can be saved locally but
+  cannot be published to this Space.
 - Prefer entries with a published SHA-256 and verify it where possible. A
   matching hash proves the bytes match; it does not prove they are safe.
 - Treat `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf` and `.safetensors` files from
