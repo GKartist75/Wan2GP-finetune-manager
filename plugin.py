@@ -225,7 +225,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.7.1"
+PLUGIN_VERSION = "3.7.2"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"

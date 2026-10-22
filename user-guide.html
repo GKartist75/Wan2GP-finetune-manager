@@ -194,6 +194,28 @@
   </p>
 </div>
 
+<!-- ============ SECURITY ============ -->
+<div class="section">
+  <h2><span class="emoji">🛡️</span> Security and trust — check URLs yourself</h2>
+
+  <div class="tip-box">
+    <span class="icon">⚠️</span>
+    <p><strong>The registry is community-contributed and untrusted.</strong> The plugin checks the recipe structure and URL policy — HTTPS only, no credentials, no local/private hosts, no bare filenames or embedded HTML — but that is a guardrail, not a safety guarantee. It cannot prove the uploader is honest or that the file behind a URL is safe. <strong>Always check the URL yourself before downloading.</strong></p>
+  </div>
+
+  <div class="feature-card">
+    <h3><span>🔎</span> Before you download</h3>
+    <ul class="step-list">
+      <li>Open the details and confirm every URL starts with <code>https://</code> and uses a host you expect, normally <code>huggingface.co</code>, <code>civitai.com</code> or <code>civitai.red</code>.</li>
+      <li>Check the repository, path and filename. Lookalike accounts and re-uploads can reuse the same name and description.</li>
+      <li>Prefer entries that publish a SHA-256, and verify it where the host provides one. A matching hash proves the bytes match; it does not prove they are safe.</li>
+      <li>Treat <code>.ckpt</code>, <code>.pt</code>, <code>.pth</code>, <code>.bin</code>, <code>.gguf</code> and <code>.safetensors</code> files from strangers as untrusted. Do not load one just because it is listed here.</li>
+      <li>Never put a Hugging Face or CivitAI token in a finetune JSON or a shared recipe. Tokens belong only in your local, gitignored <code>config.json</code>.</li>
+      <li>Report malicious or broken entries through <a href="https://github.com/GKartist75/Wan2GP-finetune-manager/issues">GitHub Issues</a>.</li>
+    </ul>
+  </div>
+</div>
+
 <!-- ============ BROWSE ============ -->
 <div class="section">
   <h2><span class="emoji">🔍</span> Browse — Discover finetunes from the community</h2>
@@ -392,7 +414,7 @@
 </div>
 
 <div class="footer">
-  Finetune Manager v3.7.1 — Wan2GP plugin by GKartist75
+  Finetune Manager v3.7.2 — Wan2GP plugin by GKartist75
 </div>
 
 </div>

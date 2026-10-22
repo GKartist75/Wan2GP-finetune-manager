@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.7.1 🧪
+# Wan2GP Finetune Manager Plugin v3.7.2 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,36 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.7.1** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.7.2** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+
+## Security and trust — verify every URL yourself
+
+The registry is **community-contributed and untrusted**. The plugin validates the
+recipe structure and the URL policy (HTTPS only, no credentials, no local or
+private-network hosts), and it refuses bare filenames, local paths and embedded
+HTML. Those checks reduce obvious risks; they **do not** prove that the uploader
+is trustworthy or that the file behind a URL is what it claims to be.
+
+Before downloading anything:
+
+- Open the JSON/details and check **every URL yourself**. It must start with
+  `https://` and the host must be one you expect, normally `huggingface.co`,
+  `civitai.com` or `civitai.red`.
+- Check the **repository, path and filename**. Re-uploads, lookalike accounts and
+  typosquatted hosts can carry the same display name and description.
+- Prefer entries with a **known SHA-256**, and verify it after download where the
+  source publishes one. A valid hash proves the bytes match; it does not prove
+  the bytes are safe.
+- Treat `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf` and `.safetensors` files from
+  strangers as executable code until proven otherwise. Do not load a model just
+  because it appears in this registry.
+- Never put your Hugging Face or CivitAI token in a finetune JSON or a shared
+  recipe. Tokens belong only in the local, gitignored `config.json`.
+- Report malicious or broken entries through
+  [GitHub Issues](https://github.com/GKartist75/Wan2GP-finetune-manager/issues).
+
+**This plugin is a browser and editor, not an antivirus or a signature authority.
+Always check yourself.**
 
 ## Features
 
@@ -143,13 +172,18 @@ wan2gp-finetune-manager/
 ├── __init__.py
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
-├── plugin.py            # All plugin logic (4 tabs)
-├── plugin_info.json     # Plugin metadata v3.6.9
+├── plugin.py            # Plugin entry point and UI logic
+├── plugin_info.json     # Plugin metadata v3.7.2
+├── fm_security.py       # URL policy, safe fetching, size limits
+├── fm_assets.py         # Pack recipe/asset resolution
+├── fm_pack.py           # Pack catalog, downloads, updates
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
 ├── hf_space/            # Static HF registry page (uploaded to the Space)
 │   ├── index.html       # Family-aware registry browser
+│   ├── index.json       # Machine-readable registry index
 │   └── families.json    # Generated family catalogue + architecture map
+├── tests/               # Asset, pack and security tests
 └── .gitignore
 ```
 
@@ -176,6 +210,16 @@ Remove-Item -Recurse -Force .\__pycache__
 ```
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v3.7.2
+
+- **Security and trust disclaimer** — the README and user guide now state plainly that the registry is untrusted and that URL validation is not a safety guarantee. Check the host, repository and file yourself before downloading.
+- **Registry index refreshed** — `index.json` now lists the 14 finetunes that actually exist instead of three removed recipes. The live Space page is also up to date with the v3.7.1 hardening.
+- **Files section corrected** — the README now lists the current modules, tests and Space files.
+
+## What's New in v3.7.1
+
+- **Security hardening** — one allowlisted HTTPS URL policy for registry, CivitAI and downloads; redirects cannot escape the allowlist; auth headers are stripped across hosts; tokens cannot be embedded in uploads. Registry recipes are treated as untrusted and rejected if they contain bare filenames, local paths, dangerous schemes or embedded HTML. The HF Space page escapes attributes, caps JSON size and encodes file IDs. See `CHANGELOG.md` for details.
 
 ## What's New in v3.6.9
 

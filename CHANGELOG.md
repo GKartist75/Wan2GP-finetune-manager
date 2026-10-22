@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.7.2 (2026-10-22)
+
+### Documentation
+- **Security and trust disclaimer** - README and user guide now state that the registry is community-contributed and untrusted. The plugin's URL policy is a guardrail, not a safety guarantee: verify the host, repository and filename yourself, prefer published hashes, and never load unknown weight files just because they appear in the registry.
+- **Token warning** - never place Hugging Face or CivitAI tokens in a finetune JSON or shared recipe; tokens belong only in the gitignored local `config.json`.
+- **README files section corrected** - lists `fm_security.py`, `fm_assets.py`, `fm_pack.py`, tests, and the Space `index.json`.
+- **HF Space notice** - the public page now tells users to verify the destination URL and file themselves, not just that the page renders text safely.
+
+### Fixed
+- **Stale registry index** - `index.json` listed three removed recipes. Regenerated from the 14 finetunes that actually exist and published to the Space.
+
+### Changed
+- Bumped version to 3.7.2 (plugin.py, plugin_info.json, README, user guide).
+
 ## v3.7.1 (2026-10-22)
 
 ### Security
