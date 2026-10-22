@@ -17,7 +17,7 @@ Community finetune definitions for Wan2GP.
 
 ## Security and trust
 
-**These recipes are community-contributed and untrusted.** The registry and the
+**These recipes are community-contributed.** The registry and the
 Finetune Manager check structure and URL policy (HTTPS only, no credentials, no
 local/private hosts, no bare filenames or embedded HTML), but that is a
 guardrail, not a safety guarantee. It does not prove the uploader is honest or
@@ -31,7 +31,7 @@ Before downloading:
 - Prefer entries with a published SHA-256 and verify it where possible. A
   matching hash proves the bytes match; it does not prove they are safe.
 - Treat `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf` and `.safetensors` files from
-  strangers as untrusted. Do not load a model just because it is listed here.
+  strangers with caution. Do not load a model just because it is listed here.
 - Never put a Hugging Face or CivitAI token in a finetune JSON or a shared
   recipe.
 

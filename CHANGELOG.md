@@ -1,9 +1,15 @@
 # Changelog
 
+## v3.7.3 (2026-10-22)
+
+### Changed
+- **Registry wording** - the documentation now describes the registry as community-contributed. The security guidance is unchanged: verify every URL, host and file before downloading.
+- Bumped version to 3.7.3 (plugin.py, plugin_info.json, README, user guide).
+
 ## v3.7.2 (2026-10-22)
 
 ### Documentation
-- **Security and trust disclaimer** - README and user guide now state that the registry is community-contributed and untrusted. The plugin's URL policy is a guardrail, not a safety guarantee: verify the host, repository and filename yourself, prefer published hashes, and never load unknown weight files just because they appear in the registry.
+- **Security and trust disclaimer** - README and user guide now state that the registry is community-contributed. The plugin's URL policy is a guardrail, not a safety guarantee: verify the host, repository and filename yourself, prefer published hashes, and never load unknown weight files just because they appear in the registry.
 - **Token warning** - never place Hugging Face or CivitAI tokens in a finetune JSON or shared recipe; tokens belong only in the gitignored local `config.json`.
 - **README files section corrected** - lists `fm_security.py`, `fm_assets.py`, `fm_pack.py`, tests, and the Space `index.json`.
 - **HF Space notice** - the public page now tells users to verify the destination URL and file themselves, not just that the page renders text safely.
@@ -18,7 +24,7 @@
 
 ### Security
 - **One URL policy for every outbound request** - new `fm_security.py` rejects non-HTTPS schemes, credentials, loopback/private/link-local addresses, blocked local suffixes, and redirect hops outside the same allowlist. Registry, CivitAI and download traffic now go through it instead of raw `requests`/`urlopen`.
-- **Downloaded registry recipes are untrusted** - strict validation rejects bare filenames, local paths, dangerous schemes, and embedded HTML before a recipe can be loaded or improved. Unsafe entries are badged in Browse instead of silently breaking the editor.
+- **Downloaded registry recipes are validated** - strict validation rejects bare filenames, local paths, dangerous schemes, and embedded HTML before a recipe can be loaded or improved. Unsafe entries are badged in Browse instead of silently breaking the editor.
 - **Redirect and token handling** - Authorization and Cookie headers are stripped on cross-host redirects; CivitAI tokens are only attached to CivitAI hosts and upload refuses URLs that embed `token=`.
 - **Path and XSS hardening** - Windows device names are rejected as file stems, pack deletion is contained to its roots, and registry/catalog text is HTML-escaped before it reaches Markdown, cards, or the HF Space. The Space also caps JSON size and escapes quotes in attributes.
 

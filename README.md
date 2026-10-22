@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.7.2 🧪
+# Wan2GP Finetune Manager Plugin v3.7.3 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,11 +6,11 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.7.2** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.7.3** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Security and trust — verify every URL yourself
 
-The registry is **community-contributed and untrusted**. The plugin validates the
+The registry is **community-contributed**. The plugin validates the
 recipe structure and the URL policy (HTTPS only, no credentials, no local or
 private-network hosts), and it refuses bare filenames, local paths and embedded
 HTML. Those checks reduce obvious risks; they **do not** prove that the uploader
@@ -211,15 +211,19 @@ Remove-Item -Recurse -Force .\__pycache__
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
 
+## What's New in v3.7.3
+
+- **Registry wording** — the registry is described as community-contributed. The security guidance is unchanged: verify every URL, host and file before downloading.
+
 ## What's New in v3.7.2
 
-- **Security and trust disclaimer** — the README and user guide now state plainly that the registry is untrusted and that URL validation is not a safety guarantee. Check the host, repository and file yourself before downloading.
+- **Security and trust disclaimer** — the README and user guide now state plainly that the registry is community-contributed and that URL validation is not a safety guarantee. Check the host, repository and file yourself before downloading.
 - **Registry index refreshed** — `index.json` now lists the 14 finetunes that actually exist instead of three removed recipes. The live Space page is also up to date with the v3.7.1 hardening.
 - **Files section corrected** — the README now lists the current modules, tests and Space files.
 
 ## What's New in v3.7.1
 
-- **Security hardening** — one allowlisted HTTPS URL policy for registry, CivitAI and downloads; redirects cannot escape the allowlist; auth headers are stripped across hosts; tokens cannot be embedded in uploads. Registry recipes are treated as untrusted and rejected if they contain bare filenames, local paths, dangerous schemes or embedded HTML. The HF Space page escapes attributes, caps JSON size and encodes file IDs. See `CHANGELOG.md` for details.
+- **Security hardening** — one allowlisted HTTPS URL policy for registry, CivitAI and downloads; redirects cannot escape the allowlist; auth headers are stripped across hosts; tokens cannot be embedded in uploads. Registry recipes are validated and rejected if they contain bare filenames, local paths, dangerous schemes or embedded HTML. The HF Space page escapes attributes, caps JSON size and encodes file IDs. See `CHANGELOG.md` for details.
 
 ## What's New in v3.6.9
 
