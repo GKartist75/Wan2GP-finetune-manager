@@ -86,6 +86,51 @@ class RegistrySafetyTests(unittest.TestCase):
         self.assertIsNone(plugin._validate_finetune_data(data, registry=True))
 
 
+class HostWarningTests(unittest.TestCase):
+    def test_expected_hosts_and_subdomains_are_not_flagged(self):
+        data = {
+            "model": {
+                "URLs": ["https://huggingface.co/acme/model.safetensors"],
+                "loras": [
+                    "https://cdn-lfs.huggingface.co/acme/lora.safetensors",
+                    "https://civitai.com/api/download/models/1",
+                ],
+                "preload_URLs": ["ltx2_22B"],
+            }
+        }
+        self.assertEqual(plugin._unexpected_url_hosts(data), [])
+        self.assertEqual(plugin._unexpected_host_warning(data), "")
+
+    def test_unexpected_public_host_is_flagged(self):
+        data = {
+            "model": {
+                "URLs": [
+                    "https://evil.example/model.safetensors|sub/dir",
+                    "https://evil.example/other.safetensors",
+                ],
+                "loras": ["https://huggingface.co/acme/lora.safetensors"],
+            }
+        }
+        self.assertEqual(plugin._unexpected_url_hosts(data), ["evil.example"])
+        self.assertEqual(plugin._unexpected_host_warning(data), "evil.example")
+
+    def test_card_renders_escaped_host_badge(self):
+        html = plugin._fmt_card_html_item(
+            "id", "name", "arch", "author", "desc", [], [], [],
+            False, host_warning="evil.example",
+        )
+        self.assertIn("check host: evil.example", html)
+        self.assertIn("verify it yourself", html)
+
+    def test_format_validation_reports_unexpected_host(self):
+        ok, msg = plugin._validate_entry(
+            "https://evil.example/model.safetensors", network=False
+        )
+        self.assertTrue(ok)
+        self.assertIn("unexpected host", msg)
+        self.assertIn("evil.example", msg)
+
+
 class MarkdownSafetyTests(unittest.TestCase):
     def test_pack_cells_escape_html_and_pipes(self):
         value = plugin._pack_md_cell("<img src=x>|next")

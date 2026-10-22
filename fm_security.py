@@ -110,6 +110,11 @@ def _host_allowed(host: str, allowed_hosts: tuple[str, ...] | list[str] | None) 
     return False
 
 
+def host_allowed(host: str, allowed_hosts: tuple[str, ...] | list[str] | None) -> bool:
+    """True when *host* equals an allowlisted host or is its subdomain."""
+    return _host_allowed(host, allowed_hosts)
+
+
 def url_problem(
     url: str,
     *,

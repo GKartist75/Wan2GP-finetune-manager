@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.7.4 (2026-10-22)
+
+### Added
+- **Unexpected-host badge** - registry and local cards now show `check host: <host>` when a download URL uses a public HTTPS host outside the usual Hugging Face/CivitAI families (`huggingface.co`, `hf.co`, `civitai.com`, `civitai.red` and their subdomains). Subdomains such as `cdn-lfs.huggingface.co` are accepted.
+- **Validation warning** - per-URL validation still accepts the URL but appends `unexpected host '<host>' — verify it yourself` instead of claiming it is fully expected.
+- **Tests** - cover expected hosts/subdomains, unexpected hosts, badge escaping, and the format-validation warning.
+
+### Changed
+- **Warning, not a block** - unexpected hosts remain allowed, because valid recipes may use other HTTPS hosts. The badge asks the user to inspect the destination rather than silently rejecting the entry.
+- Bumped version to 3.7.4 (plugin.py, plugin_info.json, README, user guide).
+
 ## v3.7.3 (2026-10-22)
 
 ### Changed

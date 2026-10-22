@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.7.3 🧪
+# Wan2GP Finetune Manager Plugin v3.7.4 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.7.3** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.7.4** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Security and trust — verify every URL yourself
 
@@ -21,6 +21,9 @@ Before downloading anything:
 - Open the JSON/details and check **every URL yourself**. It must start with
   `https://` and the host must be one you expect, normally `huggingface.co`,
   `civitai.com` or `civitai.red`.
+- Browse and Local badge any entry whose download host is outside those usual
+  families with **check host: …**. It is a warning, not a block — open the URL
+  and decide whether you trust that host.
 - Check the **repository, path and filename**. Re-uploads, lookalike accounts and
   typosquatted hosts can carry the same display name and description.
 - Prefer entries with a **known SHA-256**, and verify it after download where the
@@ -173,7 +176,7 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # Plugin entry point and UI logic
-├── plugin_info.json     # Plugin metadata v3.7.2
+├── plugin_info.json     # Plugin metadata v3.7.4
 ├── fm_security.py       # URL policy, safe fetching, size limits
 ├── fm_assets.py         # Pack recipe/asset resolution
 ├── fm_pack.py           # Pack catalog, downloads, updates
@@ -210,6 +213,10 @@ Remove-Item -Recurse -Force .\__pycache__
 ```
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v3.7.4
+
+- **Unexpected-host badges** — Browse and Local now mark entries whose download URLs use a host outside the usual Hugging Face/CivitAI families. The badge shows the host (for example `check host: evil.example`) and explains that you should verify it. The entry is not blocked; validation reports the host as a warning too.
 
 ## What's New in v3.7.3
 

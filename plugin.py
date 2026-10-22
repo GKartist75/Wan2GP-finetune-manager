@@ -225,7 +225,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.7.3"
+PLUGIN_VERSION = "3.7.4"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -323,6 +323,14 @@ DOWNLOAD_URL_KEYS = [
     "custom_url_2",
     "custom_url_3",
 ]
+# Hosts normally used by registry and recipe downloads. Entries on other
+# public HTTPS hosts are allowed, but Browse/Local badge them for review.
+EXPECTED_DOWNLOAD_HOSTS = (
+    "huggingface.co",
+    "hf.co",
+    "civitai.com",
+    "civitai.red",
+)
 # Indices of URL/LoRA/path fields in ALL_INPUTS (editor tab)
 URL_FIELD_IDX = [5, 6, 7, 8, 9, 10, 11, 12]
 
@@ -347,6 +355,59 @@ def _find_token_urls(data: dict) -> list[str]:
             if isinstance(v, str) and "token=" in v:
                 found.append(f"{key}: {v}")
     return found
+
+
+def _url_host(value) -> str | None:
+    """Return the hostname of an http(s) URL, ignoring ``|subfolder``."""
+    text = str(value or "").strip()
+    if not text.casefold().startswith(("http://", "https://")):
+        return None
+    try:
+        host = urllib.parse.urlsplit(text.partition("|")[0]).hostname
+    except ValueError:
+        return None
+    return host.lower().rstrip(".") if host else None
+
+
+def _unexpected_url_hosts(data) -> list[str]:
+    """Download hosts outside the usual Hugging Face / CivitAI families.
+
+    This is advisory only: the URL policy still allows any public HTTPS host.
+    Bare model references and local paths are skipped.
+    """
+    m = data.get("model", {}) if isinstance(data, dict) else {}
+    if not isinstance(m, dict):
+        return []
+    found: list[str] = []
+    for key in URL_VALIDATION_KEYS:
+        for value in fm_assets.source_strings(m.get(key)):
+            if value.startswith("="):
+                continue
+            host = _url_host(value)
+            if host and not fm_security.host_allowed(host, EXPECTED_DOWNLOAD_HOSTS):
+                if host not in found:
+                    found.append(host)
+    return found
+
+
+def _unexpected_host_warning(data) -> str:
+    """Short badge text for unexpected download hosts, or an empty string."""
+    hosts = _unexpected_url_hosts(data)
+    if not hosts:
+        return ""
+    shown = ", ".join(hosts[:2])
+    if len(hosts) > 2:
+        shown += f" +{len(hosts) - 2}"
+    return shown
+
+
+def _unexpected_host_note(url: str) -> str:
+    """Advisory text for one URL outside the expected download hosts."""
+    host = _url_host(url)
+    if host and not fm_security.host_allowed(host, EXPECTED_DOWNLOAD_HOSTS):
+        return f"unexpected host '{host}' — verify it yourself"
+    return ""
+
 
 # ── Registry cache: avoids redundant N+1 fetches on rapid Refresh ──
 _REGISTRY_CACHE: list[dict] | None = None
@@ -726,7 +787,7 @@ def _fmt_card_html_item(
     is_selected: bool, sel_elem_id: str = "fm-selected",
     is_variant: bool = False, family_label: str = "",
     family_warning: str = "", is_pack: bool = False,
-    security_warning: str = "",
+    security_warning: str = "", host_warning: str = "",
 ) -> str:
     """Build a single finetune card HTML fragment.
     Used by both the Browse and Local tab card builders."""
@@ -759,6 +820,12 @@ def _fmt_card_html_item(
         badge_parts.append(
             "<span class='fm-badge fm-badge-warn' title='This entry cannot be "
             "loaded until the download URL is fixed'>&#9888; unsafe entry</span>"
+        )
+    if host_warning:
+        badge_parts.append(
+            "<span class='fm-badge fm-badge-warn' title='Download host is not "
+            "a usual Hugging Face or CivitAI host; verify it yourself'>&#9888; "
+            f"check host: {html.escape(str(host_warning))}</span>"
         )
     tag = " ".join(badge_parts)
     if isinstance(ftags, str):
@@ -1559,7 +1626,12 @@ def _validate_entry(
         if not network:
             _remote, clean_url, _sub, _name = fm_assets.parse_source(v)
             problem = fm_security.url_problem(clean_url or v)
-            return (False, problem) if problem else (True, "URL format OK")
+            if problem:
+                return False, problem
+            note = _unexpected_host_note(clean_url or v)
+            if note:
+                return True, f"URL format OK; {note}"
+            return True, "URL format OK"
         return _validate_url(v)
     if v.startswith(("/", ".", "\\")) or (len(v) > 1 and v[1] == ":"):
         return _validate_local_path(v)
@@ -1622,8 +1694,10 @@ def _validate_url(url: str) -> tuple[bool, str]:
     if error:
         return False, error
     suffix = f" (saves to {subfolder})" if subfolder else ""
+    note = _unexpected_host_note(clean_url)
+    note = f"; {note}" if note else ""
     if code and code < 400:
-        return True, f"HTTP {code}{suffix}"
+        return True, f"HTTP {code}{suffix}{note}"
     if code == 404:
         return False, "HTTP 404 - Not Found"
     if code == 401:
@@ -2307,6 +2381,9 @@ def _fetch_dynamic_registry_no_cache() -> list[dict]:
             security_warnings = _check_bare_filenames(data)
             if security_warnings:
                 entry["security_warning"] = security_warnings[0]
+            host_warning = _unexpected_host_warning(data)
+            if host_warning:
+                entry["host_warning"] = host_warning
             fins.append(entry)
             seen.add(fid)
         except Exception:
@@ -4428,6 +4505,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 family_label=_family_label(catalog, fam),
                                 family_warning=f.get("family_warning", ""),
                                 security_warning=f.get("security_warning", ""),
+                                host_warning=f.get("host_warning", ""),
                             )
                         )
                     _h.append("</div>")
@@ -6223,6 +6301,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         "family": family,
                         "family_label": _family_label(catalog, family),
                         "family_warning": _family_warning(self, m, family),
+                        "host_warning": _unexpected_host_warning(data),
                     })
                 return entries
 
@@ -6299,6 +6378,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             family_label=e.get("family_label", ""),
                             family_warning=e.get("family_warning", ""),
                             is_pack=bool(e.get("is_pack")),
+                            host_warning=e.get("host_warning", ""),
                         )
                     )
                 _h.append("</div>")
