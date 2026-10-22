@@ -1,0 +1,288 @@
+{
+  "registry": "wan2gp-finetune-registry",
+  "version": 1,
+  "finetunes": [
+    {
+      "id": "10eros",
+      "name": "10Eros_v1-Q4_K_M.gguf",
+      "author": "Revere1976",
+      "version": "1.0.0",
+      "architecture": "ltx2_22B",
+      "description": "10Eros LTX-2.3 Finetune",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/Abiray/LTX2.3-10Eros-GGUF/resolve/main/10Eros_v1-Q4_K_M.gguf"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "10eros_variant",
+      "name": "10Eros_v1-Q4_K_M.gguf",
+      "author": "skunk77",
+      "version": "1.0.0",
+      "architecture": "ltx2_22B",
+      "description": "10Eros LTX-2.3 Finetune",
+      "source": "ltx2_22B",
+      "URLs": [
+        "https://huggingface.co/Abiray/LTX2.3-10Eros-GGUF/resolve/main/10Eros_v1-Q4_K_M.gguf"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "EasyWan22_FastMix",
+      "name": "EasyWan22 FastMix",
+      "author": "GameEnder",
+      "version": "1.0.0",
+      "architecture": "i2v_2_2",
+      "description": "EasyWan22 FastMix is generating model with only 6 steps",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp16.safetensors"
+      ],
+      "loras": [
+        "https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors",
+        "https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors"
+      ],
+      "loras_multipliers": [
+        "1.0;0.0",
+        "0.0;1.0"
+      ],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 6,
+        "guidance_scale": 1.0
+      }
+    },
+    {
+      "id": "Minimax-h3_Singularity_ref2va",
+      "name": "MiniMax-H3 Singularity",
+      "author": "Ahmed12131",
+      "version": "1.0.0",
+      "architecture": "minimax_h3_ref2va",
+      "description": "Minimax-h3_Singularity is a comprehensive fine-tuned fusion model specialized in enhancing the capabilities of MiniMax-H3. Designed as a versatile multimodal video generation model, it natively supports Text-to-Video (T2V), Image-to-Video (I2V), Reference-to-Video (Ref2V), and Video-to-Video (V2V)",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/resolve/main/Minimax-h3_Singularity_ref2va_v1.3_int8.safetensors"
+      ],
+      "loras": [
+        "https://huggingface.co/lynaNSFW/mysticxxx_MM_H3/resolve/main/MysticXXX_MMH3-V4.safetensors",
+        "https://huggingface.co/t8star/minimax_h3_turbo_v4_step600_ema_DasiwaREF2VAHybridV1_0_curveproj1025_compat_v001/resolve/main/minimax_h3_turbo_v4_step600_ema_comfyui.safetensors",
+        "https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/resolve/main/h3-realism-people-t2v-i2v-r2v.safetensors"
+      ],
+      "loras_multipliers": [
+        1,
+        1,
+        1
+      ],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 8,
+        "guidance_scale": 1.5
+      }
+    },
+    {
+      "id": "SCAIL-2_GGUF",
+      "name": "SCAIL-2 GGUF",
+      "author": "GameEnder",
+      "version": "1.0.0",
+      "architecture": "scail2_14B",
+      "description": "GGUF quantizations of SCAIL-2, the end-to-end character-animation / video motion-transfer model (Wan 2.1 14B backbone) from zai-org. These run the SCAIL-2 DiT in ComfyUI at a fraction of the VRAM the full fp16/fp8 weights require.",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/realrebelai/SCAIL-2_GGUF/resolve/main/SCAIL-2-Q8_0.gguf"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 40,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "flux2_klein_base_9b_biglove4_nvp4",
+      "name": "Flux 2 Klein 9B BigLove NVFP4",
+      "author": "GameEnder",
+      "version": "1.0.0",
+      "architecture": "flux2_klein_9b",
+      "description": "FLUX.2 Klein 9B is a balanced rectified flow transformer for image generation and editing. This non distilled version is slower but should produce more diverse images.",
+      "source": "flux2_klein_base_9b",
+      "URLs": [
+        "https://huggingface.co/Granddyser/flux-klein-9b-Biglove-Collection/resolve/main/BigLoveKlein4_nvfp4.safetensors"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 4,
+        "guidance_scale": 1
+      }
+    },
+    {
+      "id": "krea2_turbo_finetune",
+      "name": "Krea 2 Turbo",
+      "author": "skunk77",
+      "version": "1.0.0",
+      "architecture": "krea2_turbo",
+      "description": "Krea 2 is the most aesthetic open-source image model available according to its authors. Krea 2 Turbo is the distilled few-step Krea 2 checkpoint for fast text-to-image generation.",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/DeepBeepMeep/krea-2/resolve/main/Krea2Turbo_bf16.safetensors",
+        "https://huggingface.co/DeepBeepMeep/krea-2/resolve/main/Krea2Turbo_quanto_bf16_int8.safetensors"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 8,
+        "guidance_scale": 0
+      }
+    },
+    {
+      "id": "ltx2_22B_10Eros",
+      "name": "LTX-2 2.3 22B 10Eros",
+      "author": "GameEnder",
+      "version": "1.0.0",
+      "architecture": "ltx2_22B",
+      "description": "LTX-2 2.3 22B 10Eros",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/TenStrip/LTX2.3-10Eros/resolve/main/10Eros_v1_bf16.safetensors",
+        "https://huggingface.co/TenStrip/LTX2.3-10Eros/resolve/main/10Eros_v1_fp8_transformer.safetensors"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 12,
+        "guidance_scale": 2.5
+      }
+    },
+    {
+      "id": "ltx2_22B_test_1",
+      "name": "LTX-2 test 1",
+      "author": "alexisz6",
+      "version": "1.0.0",
+      "architecture": "ltx2_22B",
+      "description": "LTX-2.3 generates video up to 20s with an audio soundtrack. Supports start/end keyframes and sliding-window continuation. You can force the audio soundtrack by providing an Audio Prompt. Alternatively you can provide a Voice Audio Sample to use Id Lora Voice Cloning (lora automatically loaded)",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/ltx-2.3-22b-dev-Q4_0.gguf"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "ltx2_25_22B_redgraft_nsfw",
+      "name": "LTX-2 2.5 REDGraft Sulphur2 NSFW 22B",
+      "author": "HateTM",
+      "version": "1.0.0",
+      "architecture": "ltx2_25_22B",
+      "description": "REDGraft by RedCraft (CivitAI model 1295569, version 3250230): LTX-2.5 22B with sulphur2 weights transferred, Comfy mixed INT8 / asym W4A8 checkpoint; torch.compile disabled for this model. Distilled-style pipeline (8 + 3 steps, CFG 1). Author defaults: 10 s, 24 FPS.",
+      "source": null,
+      "URLs": [
+        "https://civitai.com/api/download/models/3250230"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 8,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "qwen_image_edit_2511_nvfp4_20B",
+      "name": "Qwen Image Edit Plus (2511) NVFP4 20B",
+      "author": "tyiiikah",
+      "version": "1.0.0",
+      "architecture": "qwen_image_edit_plus2_20B",
+      "description": "NVFP4 Qunatization model of Qwen-Image-Edit-2511",
+      "source": null,
+      "URLs": [
+        "https://huggingface.co/Bedovyy/Qwen-Image-Edit-2511-NVFP4/resolve/main/qwen_image_edit_2511_nvfp4.safetensors"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "redcraft",
+      "name": "redcraft",
+      "author": "bobsap1111",
+      "version": "1.0.0",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "description": "Pruned Reference-to-Video-and-Audio: generate synchronized video and stereo audio from text plus reference images, video, and/or audio.",
+      "source": "https://huggingface.co/jasperz111/redcraft-minimax-h3-a2a-redmix",
+      "URLs": [
+        "https://huggingface.co/jasperz111/redcraft-minimax-h3-a2a-redmix/resolve/main/redcraftMinimaxH3REDMIX_h3A2AREDMinimax.safetensors"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "ref2va_singularity_h3_singularity_ref2va_pruned_v1.3_int8.safetensors",
+      "name": "ref2va singularity",
+      "author": "bobsap1111",
+      "version": "1.0.0",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "description": "Pruned Reference-to-Video-and-Audio: generate synchronized video and stereo audio from text plus reference images, video, and/or audio.",
+      "source": "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity",
+      "URLs": [
+        "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/resolve/main/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    },
+    {
+      "id": "z_image_turbo_nsfw_https_huggingface.co_lesliemore_z-image-turbo-nsfw-v2-gguf",
+      "name": "z-image-turbo-nsfw-v2-GGUF",
+      "author": "tyiiikah",
+      "version": "1.0.0",
+      "architecture": "z_image",
+      "description": "nsfw t2v",
+      "source": "https://huggingface.co/lesliemore/z-image-turbo-nsfw-v2-GGUF",
+      "URLs": [
+        "https://huggingface.co/lesliemore/z-image-turbo-nsfw-v2-GGUF/resolve/main/z_image_nsfw_v2-Q8_0.gguf"
+      ],
+      "loras": [],
+      "loras_multipliers": [],
+      "tags": [],
+      "default_settings": {
+        "num_inference_steps": 30,
+        "guidance_scale": 5.0
+      }
+    }
+  ]
+}
