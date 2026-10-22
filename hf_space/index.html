@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://huggingface.co https://*.hf.co; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <meta name="referrer" content="no-referrer">
   <title>Wan2GP Finetune Registry</title>
   <style>
     :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --text-muted: #8b949e; --accent: #58a6ff; --green: #238636; --green-hover: #2ea043; --section-title: #79c0ff; }
@@ -37,6 +39,7 @@
     .api-note code { background: #21262d; padding: 2px 6px; border-radius: 4px; }
     .empty { color: var(--text-muted); text-align: center; padding: 2rem; }
     .error { color: #f85149; text-align: center; padding: 2rem; }
+    .notice { border: 1px solid var(--border); border-left: 3px solid #d29922; background: #1c1a12; color: var(--text-muted); border-radius: 6px; padding: .7rem .9rem; margin-bottom: 1rem; font-size: .82rem; }
     .hidden { display: none !important; }
     /* Model families */
     .family-header { display: flex; align-items: center; gap: 10px; margin: 1.5rem 0 .6rem; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--section-title); }
@@ -113,6 +116,7 @@
   <div class="container">
     <h1>&#127916; Wan2GP Finetune Registry</h1>
     <p class="subtitle">Community finetunes for Wan2GP &#8212; only finetunes that actually exist on the server are shown, grouped by model family<br><em style="font-size:.85rem;color:var(--text-muted)">Click a card to view details</em></p>
+    <div class="notice">Community uploads are untrusted. This page renders entry text as text (not HTML); the Finetune Manager validates every download URL and refuses recipes with bare filenames, local paths, or non-HTTPS sources. Do not run files from strangers.</div>
 
     <div class="filters">
       <input type="text" id="searchInput" placeholder="Search by name, description, or ID..." oninput="applyFilters()">
@@ -266,9 +270,15 @@
         for (const file of finFiles) {
           const fid = file.path.slice('finetunes/'.length, -'.json'.length);
           try {
-            const resp = await fetch(`/finetunes/${fid}.json`);
+            const resp = await fetch(`/finetunes/${encodeURIComponent(fid)}.json`);
             if (!resp.ok) continue;
-            const data = await resp.json();
+            const declared = Number(resp.headers.get('content-length') || 0);
+            if (declared > 8 * 1024 * 1024) continue;
+            const text = await resp.text();
+            if (text.length > 8 * 1024 * 1024) continue;
+            let data;
+            try { data = JSON.parse(text); } catch (_) { continue; }
+            if (!data || typeof data !== 'object') continue;
             const m = data.model || {};
             const tags = Array.isArray(m.tags) ? m.tags :
                          typeof m.tags === 'string' ? m.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
@@ -327,7 +337,7 @@
         renderCards();
         document.getElementById('install-hint').style.display = 'block';
       } catch (e) {
-        container.innerHTML = `<p class="error">Failed to load: ${e.message}</p>`;
+        container.innerHTML = `<p class="error">Failed to load: ${escapeHTML(e.message)}</p>`;
       }
     }
 
@@ -408,7 +418,7 @@
         const warnHtml = f.familyWarning
           ? `<span class="warn-badge" title="architecture does not match the model name">&#9888; looks like ${escapeHTML(f.familyWarning)}</span>`
           : '';
-        html += `<div class="card" onclick="showDetail('${f.id.replace(/'/g, "\\'")}')">
+        html += `<div class="card" data-fid="${escapeHTML(f.id)}" onclick="showDetail(this.dataset.fid)">
           <h2>${escapeHTML(f.name)}</h2>
           <p class="author">by ${escapeHTML(f.author)} · v${escapeHTML(f.version)}</p>
           ${f.description ? `<p class="desc">${escapeHTML(f.description)}</p>` : ''}
@@ -438,7 +448,7 @@
         '<summary>&#128209; Raw JSON</summary>' +
         renderJSON(fin.rawData) +
         '</details></div>' +
-        `<a class="dl-link" href="/finetunes/${fin.id}.json" download>&#128229; Download JSON</a>`;
+        `<a class="dl-link" href="/finetunes/${encodeURIComponent(fin.id)}.json" download>&#128229; Download JSON</a>`;
     }
 
     function closeDetail(e) {
@@ -449,7 +459,19 @@
     function escapeHTML(s) {
       const d = document.createElement('div');
       d.textContent = String(s);
-      return d.innerHTML;
+      // Quote escaping matters for the data-fid attribute; textContent alone
+      // leaves double quotes intact, which would allow attribute injection.
+      return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function safeUrl(value) {
+      try {
+        const parsed = new URL(String(value), window.location.href);
+        return (parsed.protocol === 'https:' || parsed.protocol === 'http:')
+          ? parsed.href : '';
+      } catch (_) {
+        return '';
+      }
     }
 
     function renderSummary(fin) {
@@ -533,8 +555,8 @@
 
       // Settings
       const settings = [];
-      if (steps !== undefined && steps !== null) settings.push(`<b>Steps:</b> ${steps}`);
-      if (guid !== undefined && guid !== null) settings.push(`<b>Guidance:</b> ${guid}`);
+      if (steps !== undefined && steps !== null) settings.push(`<b>Steps:</b> ${escapeHTML(steps)}`);
+      if (guid !== undefined && guid !== null) settings.push(`<b>Guidance:</b> ${escapeHTML(guid)}`);
       if (solver) settings.push(`<b>Solver:</b> ${escapeHTML(solver)}`);
       if (settings.length) {
         html += `<div class="section-title">Settings</div>`;
@@ -558,8 +580,9 @@
           html += `<div class="section-title">${uf.label}</div>`;
           vals.forEach(v => {
             const ev = escapeHTML(String(v));
-            if (String(v).startsWith('http:') || String(v).startsWith('https:')) {
-              html += `<div class="field">&#8226; <a href="${ev}" target="_blank" rel="noopener">${ev}</a></div>`;
+            const href = safeUrl(v);
+            if (href) {
+              html += `<div class="field">&#8226; <a href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer">${ev}</a></div>`;
             } else {
               html += `<div class="field">&#8226; ${ev}</div>`;
             }
@@ -571,7 +594,7 @@
       if (loras.length) {
         html += `<div class="section-title">LoRAs</div>`;
         loras.forEach((l, i) => {
-          const mult = lmults[i] ? ` (mult: ${lmults[i]})` : '';
+          const mult = lmults[i] ? ` (mult: ${escapeHTML(lmults[i])})` : '';
           html += `<div class="field">&#8226; ${escapeHTML(String(l))}${mult}</div>`;
         });
       }
@@ -629,7 +652,7 @@
         if (val) {
           if (!peShown) { html += `<div class="section-title">Prompt Enhancer</div>`; peShown = true; }
           const tok = m[pe.tokKey];
-          const tokStr = tok ? ` (max ${tok} tokens)` : '';
+          const tokStr = tok ? ` (max ${escapeHTML(tok)} tokens)` : '';
           const v = val.length > 150 ? val.substring(0, 150) + '...' : val;
           html += `<div class="field"><b>${pe.label}:</b> ${escapeHTML(v)}${tokStr}</div>`;
         }

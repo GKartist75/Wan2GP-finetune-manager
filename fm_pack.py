@@ -23,9 +23,10 @@ from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
 try:
-    from . import fm_assets
+    from . import fm_assets, fm_security
 except ImportError:  # pragma: no cover - direct script/import fallback
     import fm_assets
+    import fm_security
 
 PACK_DIR = "adult-pack"
 MANIFEST_NAME = "adult_pack_manifest.json"
@@ -36,6 +37,10 @@ CIVITAI_SITES = ("civitai.com", "civitai.red")
 HF_API = "https://huggingface.co/api"
 CIVITAI_API = "https://civitai.red/api/v1"
 USER_AGENT = "Wan2GP-FinetuneManager/3.7"
+# API and CDN redirects stay inside these families. Downloads from a finetune
+# recipe deliberately allow any public HTTPS host; that is the product's job.
+API_HOSTS = ("huggingface.co", "hf.co", "civitai.com", "civitai.red")
+WEIGHT_HOSTS = ("huggingface.co", "hf.co", "civitai.com", "civitai.red")
 HF_SORTS = {
     "trending": "trendingScore",
     "downloads": "downloads",
@@ -283,7 +288,12 @@ def lora_arch(entry: dict) -> str:
 
 def lora_destination(entry: dict, lora_dir_for: Callable[[str], str | Path]) -> Path:
     base = Path(lora_dir_for(lora_arch(entry)))
-    return base / PACK_DIR / _safe_name(entry.get("file") or entry.get("url") or "")
+    dest = base / PACK_DIR / _safe_name(entry.get("file") or entry.get("url") or "")
+    try:
+        dest.resolve().relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError("LoRA destination escapes the LoRA root") from exc
+    return dest
 
 
 def checkpoint_assets(entry: dict, ckpts_dir: str | Path) -> list[dict]:
@@ -315,7 +325,9 @@ def recipe_path(entry: dict, finetunes_dir: str | Path) -> Path | None:
 
 def build_recipe(entry: dict, urls: Iterable[str] | None = None) -> dict:
     """Build the Wan2GP finetune JSON for a curated checkpoint entry."""
-    values = list(urls if urls is not None else (entry.get("urls") or []))
+    values = urls if urls is not None else (entry.get("urls") or [])
+    if isinstance(values, str):
+        values = [values]
     urls_out = [pack_weight_url(str(u)) for u in values if str(u or "").strip()]
     model: dict[str, Any] = {
         "name": str(entry.get("name") or ""),
@@ -357,8 +369,13 @@ def build_recipe(entry: dict, urls: Iterable[str] | None = None) -> dict:
                 root["flow_shift"] = float(recommended["shift"])
             except (TypeError, ValueError):
                 pass
+        if recommended.get("guidance") is not None:
+            try:
+                root["guidance_scale"] = float(recommended["guidance"])
+            except (TypeError, ValueError):
+                pass
         if recommended.get("sampler"):
-            root["sampler"] = str(recommended["sampler"])
+            root["sampler"] = str(recommended["sampler"])[:80]
     return root
 
 
@@ -536,22 +553,28 @@ def download_verified(
     token: str | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     label: str = "",
+    allowed_hosts: tuple[str, ...] | list[str] | None = WEIGHT_HOSTS,
 ) -> dict:
     """Download one file with resume and SHA-256 verification.
 
-    Returns ``{"status": "exists"|"downloaded", "bytes": n, "path": ...}``.
+    ``allowed_hosts=None`` accepts any public HTTPS host (recipe downloads),
+    while the default restricts CivitAI/HF catalog traffic and its redirects
+    to the expected CDN families. Returns
+    ``{"status": "exists"|"downloaded", "bytes": n, "path": ...}``.
     """
-    import requests
-
     dest = Path(destination)
     expected = int(expected_bytes or 0)
     digest = str(sha256 or "").strip().lower()
+    cap = expected or fm_security.MAX_DOWNLOAD_BYTES
     if dest.is_file():
         size = dest.stat().st_size
         if (not expected or size == expected) and (not digest or sha256_file(dest) == digest):
             if progress:
                 progress(expected or size, expected or size, label or dest.name)
             return {"status": "exists", "bytes": size, "path": str(dest)}
+    problem = fm_security.url_problem(str(url), allowed_hosts=allowed_hosts)
+    if problem:
+        raise fm_security.UnsafeUrl(problem)
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
     offset = part.stat().st_size if part.is_file() else 0
@@ -572,33 +595,55 @@ def download_verified(
         if progress:
             progress(size, size, label or dest.name)
         return {"status": "downloaded", "bytes": size, "path": str(dest)}
-    headers = {"User-Agent": "Wan2GP-FinetuneManager/3.6"}
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/octet-stream,*/*"}
     if token and _civitai_host(url):
         headers["Authorization"] = f"Bearer {str(token).strip()}"
     target = with_civitai_token(url, token)
     if offset:
         headers["Range"] = f"bytes={offset}-"
     try:
-        resp = requests.get(target, headers=headers, stream=True, timeout=(30, 180))
-        if offset and resp.status_code == 206:
-            mode = "ab"
-            total = expected or (offset + int(resp.headers.get("Content-Length") or 0))
-        else:
-            if offset and resp.status_code == 200:
-                part.unlink(missing_ok=True)
-                offset = 0
-            mode = "wb"
-            total = expected or int(resp.headers.get("Content-Length") or 0)
-        resp.raise_for_status()
-        written = offset
-        with part.open(mode) as fh:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                fh.write(chunk)
-                written += len(chunk)
-                if progress:
-                    progress(written, total or written, label or dest.name)
+        with fm_security.open_url(
+            target,
+            headers=headers,
+            timeout=180,
+            allowed_hosts=allowed_hosts,
+        ) as resp:
+            status = int(resp.status)
+            if offset and status == 206:
+                mode = "ab"
+                content_length = int(resp.headers.get("Content-Length") or 0)
+                total = expected or (offset + content_length)
+            else:
+                if offset and status == 200:
+                    part.unlink(missing_ok=True)
+                    offset = 0
+                mode = "wb"
+                content_length = int(resp.headers.get("Content-Length") or 0)
+                total = expected or content_length
+            if content_length and content_length > cap:
+                raise ValueError(
+                    f"response is {content_length} bytes, above the {cap} byte limit"
+                )
+            problem = fm_security.content_problem(resp.headers.get("Content-Type", ""))
+            if problem:
+                raise ValueError(problem)
+            disposition = str(resp.headers.get("Content-Disposition") or "")
+            if "filename=" in disposition.lower() and any(
+                bad in disposition for bad in ("../", "..\\", "/", "\\", "\x00")
+            ):
+                raise ValueError("unsafe filename in Content-Disposition")
+            written = offset
+            with part.open(mode) as fh:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > cap:
+                        raise ValueError(f"download exceeds the {cap} byte limit")
+                    fh.write(chunk)
+                    if progress:
+                        progress(written, total or cap, label or dest.name)
         size = part.stat().st_size
         if expected and size != expected:
             raise ValueError(f"size mismatch: expected {expected}, got {size}")
@@ -606,9 +651,12 @@ def download_verified(
             raise ValueError("SHA-256 mismatch")
         os.replace(part, dest)
         return {"status": "downloaded", "bytes": size, "path": str(dest)}
+    except ValueError:
+        # Never keep a body that failed size/type/hash checks.
+        part.unlink(missing_ok=True)
+        raise
     except Exception:
-        # Keep a valid partial file for resume, but never leave a corrupt one
-        # that will pass the next size check.
+        # Network errors leave a valid partial file for the next resume.
         if part.is_file() and expected and part.stat().st_size > expected:
             part.unlink(missing_ok=True)
         raise
@@ -718,22 +766,25 @@ def selected_total_bytes(
 def _civitai_api(
     site: str, path: str, token: str | None, params: dict | None = None
 ) -> dict:
-    import requests
-
-    base = f"https://{site}/api/v1/"
-    headers = {"User-Agent": "Wan2GP-FinetuneManager/3.6"}
+    host = site if site in CIVITAI_SITES else "civitai.red"
+    base = f"https://{host}/api/v1/"
+    headers = {"User-Agent": USER_AGENT}
     key = str(token or "").strip()
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    resp = requests.get(
-        base + path.lstrip("/"), headers=headers, params=params or {}, timeout=60
-    )
-    if resp.status_code in (401, 403):
-        if key:
-            raise ValueError("CivitAI rejected the stored token (HTTP 401/403)")
-        raise ValueError("this CivitAI release needs an API token")
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        data = _http_json(
+            base + path.lstrip("/"),
+            params=params or {},
+            headers=headers,
+            timeout=60,
+        )
+    except ValueError as exc:
+        if "401" in str(exc) or "403" in str(exc):
+            if key:
+                raise ValueError("CivitAI rejected the stored token (HTTP 401/403)") from exc
+            raise ValueError("this CivitAI release needs an API token") from exc
+        raise
     return data if isinstance(data, dict) else {}
 
 
@@ -929,11 +980,16 @@ def delete_finetune(
         rp.unlink()
         removed_recipe = True
     removed_weights: list[str] = []
+    root = Path(ckpts_dir).resolve()
     for asset in checkpoint_assets(entry, ckpts_dir):
         dest = asset.get("destination")
         if not dest:
             continue
         p = Path(dest)
+        try:
+            p.resolve().relative_to(root)
+        except (OSError, ValueError):
+            continue
         if p.is_file():
             p.unlink()
             removed_weights.append(str(p))
@@ -960,9 +1016,25 @@ def delete_civitai(
     installed = state.setdefault("civitaiInstalled", {})
     rec = installed.get(ident, {})
     files = rec.get("files", []) if isinstance(rec, dict) else []
+    roots = [
+        Path(ckpts_dir).resolve(),
+        Path(finetunes_dir).resolve(),
+    ]
+    try:
+        roots.append(
+            Path(lora_dir_for(str(spec.get("architecture") or ""))).resolve()
+        )
+    except Exception:
+        pass
     removed: list[str] = []
     for value in files:
         p = Path(str(value))
+        try:
+            resolved = p.resolve()
+        except OSError:
+            continue
+        if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            continue
         if p.is_file():
             p.unlink()
             removed.append(str(p))
@@ -990,23 +1062,46 @@ def delete_civitai(
 
 
 def _http_json(url: str, *, params=None, headers: dict | None = None, timeout: int = 60):
-    import requests
+    import urllib.error
+    import urllib.parse
 
-    hdrs = {"User-Agent": USER_AGENT}
+    if params:
+        query = urllib.parse.urlencode(params, doseq=True)
+        url = f"{url}{'&' if '?' in url else '?'}{query}"
+    hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     hdrs.update(headers or {})
-    resp = requests.get(url, params=params, headers=hdrs, timeout=timeout)
-    if resp.status_code in (401, 403):
-        raise ValueError(f"HTTP {resp.status_code}: authentication required")
-    resp.raise_for_status()
-    data = resp.json()
-    return data
+    try:
+        with fm_security.open_url(
+            url,
+            headers=hdrs,
+            timeout=timeout,
+            allowed_hosts=API_HOSTS,
+        ) as resp:
+            body = resp.read(fm_security.MAX_JSON_BYTES + 1)
+            if len(body) > fm_security.MAX_JSON_BYTES:
+                raise ValueError("API response is too large")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ValueError(f"HTTP {exc.code}: authentication required") from exc
+        raise
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("API returned invalid JSON") from exc
 
 
 def repo_id_ok(repo: str) -> bool:
     parts = str(repo or "").split("/")
     if len(parts) != 2:
         return False
-    ok = lambda s: bool(s) and len(s) <= 100 and re.fullmatch(r"[A-Za-z0-9._-]+", s)
+    def ok(part: str) -> bool:
+        return (
+            bool(part)
+            and len(part) <= 100
+            and part not in (".", "..")
+            and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", part))
+        )
+
     return bool(ok(parts[0]) and ok(parts[1]))
 
 

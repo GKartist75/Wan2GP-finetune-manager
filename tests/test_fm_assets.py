@@ -40,10 +40,25 @@ class SourceParsingTests(unittest.TestCase):
         self.assertEqual(name, "my.safetensors")
 
     def test_bad_file_names_are_rejected(self):
-        for name in ("..", "a/b.safetensors", r"a\b.safetensors", "a:b", "x."):
+        for name in (
+            "..",
+            "a/b.safetensors",
+            r"a\b.safetensors",
+            "a:b",
+            "x.",
+            "CON.safetensors",
+            "nul",
+            "COM1.ckpt",
+        ):
             with self.subTest(name=name):
                 self.assertIsNone(fm_assets.safe_file_name(name))
         self.assertEqual(fm_assets.safe_file_name("good.safetensors"), "good.safetensors")
+
+    def test_reserved_subfolder_is_rejected(self):
+        for sub in ("adult-pack/CON", "a/nul/", "LPT1"):
+            with self.subTest(sub=sub):
+                with self.assertRaises(ValueError):
+                    fm_assets.safe_subdir(sub)
 
 
 class DestinationTests(unittest.TestCase):

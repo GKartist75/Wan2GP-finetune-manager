@@ -182,6 +182,18 @@ def url_file_name(url: str) -> str:
     return name
 
 
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def _reserved_stem(name: str) -> bool:
+    stem = name.split(".", 1)[0].rstrip(" .").upper()
+    return stem in _WINDOWS_RESERVED
+
+
 def safe_file_name(name: str) -> str | None:
     """Reject names that would escape a folder or are invalid on Windows."""
     if not name or len(name) > 180:
@@ -192,6 +204,8 @@ def safe_file_name(name: str) -> str | None:
     if any(ch in bad or ord(ch) < 0x20 for ch in name):
         return None
     if name.endswith((".", " ")):
+        return None
+    if _reserved_stem(name):
         return None
     return name
 
@@ -211,6 +225,8 @@ def safe_subdir(subfolder: str) -> Path:
             continue
         if part == ".." or ":" in part or "\x00" in part:
             raise ValueError(f"unsafe subfolder: {subfolder}")
+        if safe_file_name(part) is None:
+            raise ValueError(f"unsafe subfolder segment: {part}")
         parts.append(part)
     return Path(*parts) if parts else Path()
 

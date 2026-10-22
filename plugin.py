@@ -3,9 +3,7 @@ import json
 import re as _re
 import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
-import requests
 import gradio as gr
 # Lazy-imported: HfApi is imported inside functions that use it
 # so the plugin can load even if huggingface_hub is missing.
@@ -16,10 +14,68 @@ import threading
 import time
 
 try:
-    from . import fm_assets, fm_pack
+    from . import fm_assets, fm_pack, fm_security
 except ImportError:  # pragma: no cover - direct script/import fallback
     import fm_assets
     import fm_pack
+    import fm_security
+
+
+_MODEL_REF_RE = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+# Runtime input paths do not belong in a finetune recipe. Keeping them out of
+# the generated Wan2GP settings file prevents a registry entry from pointing
+# the host at an arbitrary local file.
+_PATH_SETTING_KEYS = {
+    "lst_name",
+    "image_start",
+    "image_end",
+    "image_refs",
+    "image_mask",
+    "image_guide",
+    "video_source",
+    "video_guide",
+    "video_mask",
+    "audio_guide",
+    "audio_guide2",
+    "audio_source",
+    "depth_source",
+    "pose_source",
+    "mask_source",
+}
+
+
+def _safe_model_ref(model_id) -> str | None:
+    """A finetune id usable as a file stem, or ``None``."""
+    value = str(model_id or "").strip()
+    if value.startswith("="):
+        value = value[1:].strip()
+    if not value or ".." in value or not _MODEL_REF_RE.fullmatch(value):
+        return None
+    return value
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _set_optional_int(mapping: dict, key: str, raw) -> None:
+    number = _int_or_none(raw)
+    if number is None:
+        mapping.pop(key, None)
+    else:
+        mapping[key] = max(1, min(number, 100_000))
+
+
+def _led(ok: bool, msg, *, size: int = 12) -> str:
+    """An escaped inline validation badge for a Gradio HTML element."""
+    text = html.escape(str(msg or ""), quote=True).replace("\n", "<br/>")
+    color = "#16a34a" if ok else "#dc2626"
+    icon = "\u2705" if ok else "\u274c"
+    return f'<span style="font-size:{size}px;color:{color}">{icon} {text}</span>'
 
 
 def _check_bare_filenames(data: dict) -> list[str]:
@@ -62,7 +118,7 @@ def _check_bare_filenames(data: dict) -> list[str]:
     return warnings
 
 
-def _validate_finetune_data(data) -> str | None:
+def _validate_finetune_data(data, *, registry: bool = False) -> str | None:
     """Validate a loaded finetune dict before applying it to Wan2GP.
 
     Returns a human-readable error message if the data is unusable, or None
@@ -70,6 +126,10 @@ def _validate_finetune_data(data) -> str | None:
     registry-load, local-load and import paths all enforce the same contract
     (a dict with a `model` sub-object) instead of crashing deep inside
     _write_settings_for_wan2gp's `dict(data)`.
+
+    ``registry=True`` also requires complete HTTPS download URLs. This is what
+    stops a PR like ``Moody_Pro_Mix.json`` (a bare ``.safetensors`` filename
+    plus copied CivitAI HTML) from being loaded as a working recipe.
     """
     if not isinstance(data, dict):
         return f"Finetune data is not a JSON object (got {type(data).__name__})"
@@ -77,6 +137,44 @@ def _validate_finetune_data(data) -> str | None:
         return "Finetune JSON is missing the required 'model' field"
     if not isinstance(data["model"], dict):
         return "'model' field is not a JSON object"
+    if registry:
+        m = data["model"]
+        warnings = _check_bare_filenames(data)
+        if warnings:
+            return (
+                "Registry entry has an incomplete download URL: "
+                f"{warnings[0]}"
+            )
+        for key in (
+            "URLs",
+            "URLs2",
+            "text_encoder_URLs",
+            "VAE_URLs",
+            "custom_url_1",
+            "custom_url_2",
+            "custom_url_3",
+            "loras",
+        ):
+            values = m.get(key)
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                value = value.strip()
+                if value.startswith("="):
+                    continue
+                if value.startswith(("http://", "https://")):
+                    problem = fm_security.url_problem(value)
+                    if problem:
+                        return f"Registry entry has an unsafe URL in '{key}': {problem}"
+                elif not _is_model_ref_text(value):
+                    return (
+                        f"Registry entry has a non-HTTPS source in '{key}': "
+                        f"'{value}'"
+                    )
     return None
 
 
@@ -89,7 +187,12 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
     resolution, flow_shift, sample_solver, etc.).  Only `model_type` (the
     finetune ID) is added.  Unrecognized keys are ignored by Wan2GP.
     """
-    settings = dict(data)
+    settings = {k: v for k, v in data.items() if k not in _PATH_SETTING_KEYS}
+    nested = settings.get("settings")
+    if isinstance(nested, dict):
+        settings["settings"] = {
+            k: v for k, v in nested.items() if k not in _PATH_SETTING_KEYS
+        }
     safe_id = _sanitize_fin_id(fid)
     # The model id must match the sanitized finetune filename, otherwise
     # load_settings_from_file() cannot find the model and silently falls back.
@@ -122,7 +225,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.7.0"
+PLUGIN_VERSION = "3.7.1"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -249,19 +352,30 @@ def _find_token_urls(data: dict) -> list[str]:
 _REGISTRY_CACHE: list[dict] | None = None
 _REGISTRY_CACHE_TIME: float = 0
 _REGISTRY_CACHE_TTL: float = 30.0  # seconds
-_REGISTRY_CACHE_FAILURE_TTL: float = 300.0  # seconds — serve stale on error
+_REGISTRY_CACHE_FAILURE_TTL: float = 300.0  # seconds - serve stale on error
+_REGISTRY_FAILED_AT: float = 0
 
 
 def _get_cached_registry(force: bool = False) -> list[dict]:
     """Return cached registry, fetching fresh only if stale or forced.
-    On fetch failure, serves stale cache for up to _REGISTRY_CACHE_FAILURE_TTL."""
-    global _REGISTRY_CACHE, _REGISTRY_CACHE_TIME
+    On fetch failure, serves stale cache for up to _REGISTRY_CACHE_FAILURE_TTL
+    and suppresses repeated refreshes for the same window."""
+    global _REGISTRY_CACHE, _REGISTRY_CACHE_TIME, _REGISTRY_FAILED_AT
     now = time.time()
     if not force and _REGISTRY_CACHE is not None and (now - _REGISTRY_CACHE_TIME) < _REGISTRY_CACHE_TTL:
         return _REGISTRY_CACHE
+    if (
+        not force
+        and _REGISTRY_CACHE is not None
+        and _REGISTRY_FAILED_AT
+        and (now - _REGISTRY_FAILED_AT) < _REGISTRY_CACHE_FAILURE_TTL
+    ):
+        return _REGISTRY_CACHE
     try:
         fins = _fetch_dynamic_registry_no_cache()
+        _REGISTRY_FAILED_AT = 0
     except Exception:
+        _REGISTRY_FAILED_AT = now
         # Fetch failed — serve stale cache if available and within failure TTL
         if _REGISTRY_CACHE is not None and (now - _REGISTRY_CACHE_TIME) < _REGISTRY_CACHE_FAILURE_TTL:
             return _REGISTRY_CACHE
@@ -612,15 +726,16 @@ def _fmt_card_html_item(
     is_selected: bool, sel_elem_id: str = "fm-selected",
     is_variant: bool = False, family_label: str = "",
     family_warning: str = "", is_pack: bool = False,
+    security_warning: str = "",
 ) -> str:
     """Build a single finetune card HTML fragment.
     Used by both the Browse and Local tab card builders."""
     c = " selected" if is_selected else ""
-    safe_name = html.escape(name or "?")
-    safe_arch = html.escape(arch or "")
-    safe_author = html.escape(author or "")
-    safe_desc = html.escape((desc or "")[:300])
-    safe_family = html.escape(family_label or "")
+    safe_name = html.escape(str(name or "?"))
+    safe_arch = html.escape(str(arch or ""))
+    safe_author = html.escape(str(author or ""))
+    safe_desc = html.escape(str(desc or "")[:300])
+    safe_family = html.escape(str(family_label or ""))
     badge_parts = []
     if safe_family:
         badge_parts.append(f"<span class='fm-badge'>{safe_family}</span>")
@@ -637,13 +752,19 @@ def _fmt_card_html_item(
     if family_warning:
         badge_parts.append(
             "<span class='fm-badge fm-badge-warn' title='architecture does not "
-            f"match the model name'>&#9888; looks like {html.escape(family_warning)}</span>"
+            f"match the model name'>&#9888; looks like "
+            f"{html.escape(str(family_warning))}</span>"
+        )
+    if security_warning:
+        badge_parts.append(
+            "<span class='fm-badge fm-badge-warn' title='This entry cannot be "
+            "loaded until the download URL is fixed'>&#9888; unsafe entry</span>"
         )
     tag = " ".join(badge_parts)
     if isinstance(ftags, str):
         ftags_list = [t.strip() for t in ftags.split(",") if t.strip()]
     elif isinstance(ftags, list):
-        ftags_list = [t.strip() for t in ftags if t.strip()]
+        ftags_list = [str(t).strip() for t in ftags if str(t).strip()]
     else:
         ftags_list = []
     tags_badges = ""
@@ -663,12 +784,15 @@ def _fmt_card_html_item(
         f"document.querySelector('gradio-app'))||document;"
         f"r=r.shadowRoot||r;"
         f"var ta=r.querySelector('#{sel_elem_id} textarea');"
-        f"if(ta){{ta.value={json.dumps(fid)};"
+        f"if(ta){{ta.value={html.escape(json.dumps(fid), quote=True)};"
         f"ta.dispatchEvent(new Event('input',{{bubbles:true}}))}}"
     )
 
     if isinstance(urls, str):
         urls = [urls]
+    if not isinstance(urls, list):
+        urls = []
+    urls = [u for u in urls if isinstance(u, str) and u.strip()]
     files_html = ""
     if urls:
         shown = urls[:3]
@@ -692,6 +816,9 @@ def _fmt_card_html_item(
 
     if isinstance(loras, str):
         loras = [loras]
+    if not isinstance(loras, list):
+        loras = []
+    loras = [str(l) for l in loras if isinstance(l, str) and l.strip()]
     loras_html = ""
     if loras:
         shown_l = loras[:3]
@@ -934,26 +1061,17 @@ def build_finetune_dict(
             m["text_prompt_enhancer_instructions"] = pe1
         elif "text_prompt_enhancer_instructions" in m:
             del m["text_prompt_enhancer_instructions"]
-        if pe1t:
-            m["text_prompt_enhancer_max_tokens"] = int(pe1t)
-        elif "text_prompt_enhancer_max_tokens" in m:
-            del m["text_prompt_enhancer_max_tokens"]
+        _set_optional_int(m, "text_prompt_enhancer_max_tokens", pe1t)
         if pe2:
             m["video_prompt_enhancer_instructions"] = pe2
         elif "video_prompt_enhancer_instructions" in m:
             del m["video_prompt_enhancer_instructions"]
-        if pe2t:
-            m["video_prompt_enhancer_max_tokens"] = int(pe2t)
-        elif "video_prompt_enhancer_max_tokens" in m:
-            del m["video_prompt_enhancer_max_tokens"]
+        _set_optional_int(m, "video_prompt_enhancer_max_tokens", pe2t)
         if pe3:
             m["image_prompt_enhancer_instructions"] = pe3
         elif "image_prompt_enhancer_instructions" in m:
             del m["image_prompt_enhancer_instructions"]
-        if pe3t:
-            m["image_prompt_enhancer_max_tokens"] = int(pe3t)
-        elif "image_prompt_enhancer_max_tokens" in m:
-            del m["image_prompt_enhancer_max_tokens"]
+        _set_optional_int(m, "image_prompt_enhancer_max_tokens", pe3t)
     else:
         # No original data — build fresh in canonical order
         m: dict = {}
@@ -1005,16 +1123,13 @@ def build_finetune_dict(
             m["resolutions_categories"] = [x.strip() for x in resc.split("\n") if x.strip()]
         if pe1:
             m["text_prompt_enhancer_instructions"] = pe1
-        if pe1t:
-            m["text_prompt_enhancer_max_tokens"] = int(pe1t)
+        _set_optional_int(m, "text_prompt_enhancer_max_tokens", pe1t)
         if pe2:
             m["video_prompt_enhancer_instructions"] = pe2
-        if pe2t:
-            m["video_prompt_enhancer_max_tokens"] = int(pe2t)
+        _set_optional_int(m, "video_prompt_enhancer_max_tokens", pe2t)
         if pe3:
             m["image_prompt_enhancer_instructions"] = pe3
-        if pe3t:
-            m["image_prompt_enhancer_max_tokens"] = int(pe3t)
+        _set_optional_int(m, "image_prompt_enhancer_max_tokens", pe3t)
 
     # ── Top-level dict: preserve original key order ──
     orig_out = extra_data if isinstance(extra_data, dict) else {}
@@ -1179,9 +1294,12 @@ def extract_finetune_fields(d: dict) -> tuple:
 
 def _read_model_json(model_id: str) -> dict:
     """Read a model JSON file from defaults/ or finetunes/.
-    Returns empty dict if not found."""
+    Returns empty dict if not found or the id is not a safe file stem."""
+    mid = _safe_model_ref(model_id)
+    if not mid:
+        return {}
     for base in ["defaults", FINETUNES_DIR]:
-        p = Path(base) / f"{model_id}.json"
+        p = Path(base) / f"{mid}.json"
         if p.exists():
             try:
                 return json.loads(p.read_text(encoding="utf-8"))
@@ -1349,7 +1467,8 @@ def _lora_dir_for(architecture: str, plugin=None) -> Path:
         root = Path(root_getter()) if callable(root_getter) else Path("loras")
         return Path(resolve_lora_dir(arch or "wan", str(root), {}))
     except Exception:
-        return Path("loras") / (arch or "wan")
+        safe_arch = arch.replace("/", "").replace("\\", "").strip(".")
+        return Path("loras") / (safe_arch or "wan")
 
 
 def _asset_inventory(data: dict, plugin=None):
@@ -1377,7 +1496,9 @@ def _validate_model_ref(model_id: str, plugin=None) -> tuple[bool, str]:
     and download status."""
     if not model_id or not isinstance(model_id, str) or not model_id.strip():
         return True, ""
-    mid = model_id.strip()
+    mid = _safe_model_ref(model_id)
+    if not mid:
+        return False, "Unsafe model id (path separators or '..' are not allowed)"
     msg_parts = []
     if mid in MODEL_INDEX:
         name = MODEL_INDEX[mid]
@@ -1419,9 +1540,14 @@ def _validate_local_path(path: str) -> tuple[bool, str]:
     return False, "File not found on disk"
 
 
-def _validate_entry(value: str, plugin=None) -> tuple[bool, str]:
+def _validate_entry(
+    value: str, plugin=None, *, network: bool = True
+) -> tuple[bool, str]:
     """Validate a single URL, model reference (=id), or local path.
-    Returns (is_valid, message)."""
+
+    ``network=False`` only performs format checks, so editor keystrokes never
+    contact a community-supplied host.
+    """
     if not value or not isinstance(value, str):
         return True, ""
     v = value.strip()
@@ -1430,6 +1556,10 @@ def _validate_entry(value: str, plugin=None) -> tuple[bool, str]:
     if v.startswith("="):
         return _validate_model_ref(v[1:], plugin)
     if v.startswith(("http:", "https:")):
+        if not network:
+            _remote, clean_url, _sub, _name = fm_assets.parse_source(v)
+            problem = fm_security.url_problem(clean_url or v)
+            return (False, problem) if problem else (True, "URL format OK")
         return _validate_url(v)
     if v.startswith(("/", ".", "\\")) or (len(v) > 1 and v[1] == ":"):
         return _validate_local_path(v)
@@ -1453,7 +1583,9 @@ def _validate_entry(value: str, plugin=None) -> tuple[bool, str]:
     )
 
 
-def _validate_urls(urls: list[str], plugin=None) -> list[tuple[str, bool, str]]:
+def _validate_urls(
+    urls: list[str], plugin=None, *, network: bool = True
+) -> list[tuple[str, bool, str]]:
     """Validate a list of URLs. Returns [(url, valid, message), ...].
     Skips non-URL entries."""
     results = []
@@ -1461,57 +1593,44 @@ def _validate_urls(urls: list[str], plugin=None) -> list[tuple[str, bool, str]]:
         u = u.strip()
         if not u:
             continue
-        valid, msg = _validate_entry(u, plugin)
+        valid, msg = _validate_entry(u, plugin, network=network)
         if msg or not valid:
             results.append((u, valid, msg))
     return results
 
 
 def _validate_url(url: str) -> tuple[bool, str]:
-    """Validate that a URL is reachable via HEAD request.
+    """Validate that a URL is reachable via a guarded HEAD/GET request.
 
     The ``|subfolder`` / ``|%lora_dir`` suffix is a recipe instruction, not
-    part of the URL, so it is stripped before the request.
+    part of the URL, so it is stripped before the request. Redirects are
+    checked against the same URL policy, which stops metadata validation from
+    being used as an SSRF probe.
     """
     if not url or not isinstance(url, str) or not url.strip():
         return True, ""
     is_remote, clean_url, subfolder, _name = fm_assets.parse_source(url.strip())
     if not is_remote or not clean_url:
         return True, "Not a remote URL (local path)"
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; FinetuneManager/3.0)"}
-        if CIVITAI_API_KEY and fm_assets.is_civitai_url(clean_url):
-            headers.update(_civitai_api_headers())
-        req = urllib.request.Request(clean_url, method="HEAD", headers=headers)
-        # Some servers reject HEAD on /resolve/main/ - try GET as fallback
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                code = resp.getcode()
-        except urllib.error.HTTPError as e:
-            code = e.code
-            if code in (405, 501, 403):
-                get_req = urllib.request.Request(clean_url, method="GET", headers=headers)
-                get_req.add_header("Range", "bytes=0-0")
-                try:
-                    with urllib.request.urlopen(get_req, timeout=15) as get_resp:
-                        code = get_resp.getcode()
-                except urllib.error.HTTPError as e2:
-                    code = e2.code
-        suffix = f" (saves to {subfolder})" if subfolder else ""
-        if code and code < 400:
-            return True, f"HTTP {code}{suffix}"
-        elif code and code == 404:
-            return False, "HTTP 404 - Not Found"
-        elif code and code == 401:
-            return False, "HTTP 401 - Unauthorized (may need token)"
-        elif code and code == 403:
-            return False, "HTTP 403 - Forbidden (may need token)"
-        else:
-            return False, f"HTTP {code}"
-    except urllib.error.URLError as e:
-        return False, f"Connection error: {e.reason}"
-    except Exception as e:
-        return False, f"Error: {e}"
+    problem = fm_security.url_problem(clean_url)
+    if problem:
+        return False, problem
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; FinetuneManager/3.0)"}
+    if CIVITAI_API_KEY and fm_assets.is_civitai_url(clean_url):
+        headers.update(_civitai_api_headers())
+    code, error = fm_security.probe_url(clean_url, headers=headers)
+    if error:
+        return False, error
+    suffix = f" (saves to {subfolder})" if subfolder else ""
+    if code and code < 400:
+        return True, f"HTTP {code}{suffix}"
+    if code == 404:
+        return False, "HTTP 404 - Not Found"
+    if code == 401:
+        return False, "HTTP 401 - Unauthorized (may need token)"
+    if code == 403:
+        return False, "HTTP 403 - Forbidden (may need token)"
+    return False, f"HTTP {code}"
 
 
 
@@ -1548,14 +1667,17 @@ def _download_asset(asset, plugin=None) -> str:
         return f"Failed: {asset.label}: {label} - {asset.error}"
     if not asset.downloadable or not asset.url or not asset.destination:
         return f"Skipped (local only): {asset.label}: {label}"
-    from shared.utils.download import download_file
-
     dest = Path(asset.destination)
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        # Wan2GP's downloader cannot send an Authorization header; CivitAI's
-        # documented query-token form is attached only for CivitAI hosts.
-        download_file(_civitai_with_token(asset.url), str(dest))
+        # Recipe URLs may point at any public HTTPS host, but redirects and
+        # DNS are checked by fm_security before a byte is written.
+        fm_pack.download_verified(
+            asset.url,
+            dest,
+            token=CIVITAI_API_KEY,
+            allowed_hosts=None,
+            label=asset.label,
+        )
         if dest.is_file() and dest.stat().st_size > 0:
             return f"Downloaded {asset.label}: {dest}"
         return f"Failed: {asset.label}: {label} - download produced no file"
@@ -1692,9 +1814,16 @@ def _civitai_get_json(url: str, timeout: int = 20, attempts: int = 3):
     for attempt in range(attempts):
         last = attempt == attempts - 1
         try:
-            req = urllib.request.Request(url, headers=_civitai_api_headers())
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode())
+            with fm_security.open_url(
+                url,
+                headers=_civitai_api_headers(),
+                timeout=timeout,
+                allowed_hosts=("civitai.com", "civitai.red"),
+            ) as resp:
+                body = resp.read(fm_security.MAX_JSON_BYTES + 1)
+            if len(body) > fm_security.MAX_JSON_BYTES:
+                raise ValueError("CivitAI response is too large")
+            return json.loads(body.decode())
         except urllib.error.HTTPError as e:
             if last or (e.code != 429 and e.code < 500):
                 raise
@@ -1860,11 +1989,15 @@ def _civitai_render_results(data: dict) -> str:
 
     parts = ['<div style="max-height:65vh;overflow-y:auto">']
     for model in items:
-        name = html.escape(model.get("name", "?") or "?")
-        mtype = html.escape(model.get("type", "?") or "?")
-        desc = html.escape((model.get("description", "") or "")[:200])
+        if not isinstance(model, dict):
+            continue
+        name = html.escape(str(model.get("name") or "?"))
+        mtype = html.escape(str(model.get("type") or "?"))
+        desc = html.escape(str(model.get("description") or "")[:200])
         nsfw = model.get("nsfw", False)
         versions = model.get("modelVersions", [])
+        if not isinstance(versions, list):
+            versions = []
 
         nsfw_html = (
             ' <span style="color:#dc2626;font-size:10px">NSFW</span>' if nsfw else ""
@@ -1885,15 +2018,26 @@ def _civitai_render_results(data: dict) -> str:
                 '<div style="margin-top:6px;padding-top:4px;border-top:1px solid var(--border-color-primary,#f3f4f6)">'
             )
             for v in versions:
-                vname = html.escape(v.get("name", "?") or "?")
-                base = html.escape(v.get("baseModel", "") or "")
+                if not isinstance(v, dict):
+                    continue
+                vname = html.escape(str(v.get("name") or "?"))
+                base = html.escape(str(v.get("baseModel") or ""))
                 files = v.get("files", [])
+                if not isinstance(files, list):
+                    files = []
                 primary = next(
-                    (f for f in files if f.get("primary", False)),
-                    files[0] if files else None,
+                    (
+                        f
+                        for f in files
+                        if isinstance(f, dict) and f.get("primary", False)
+                    ),
+                    files[0] if files and isinstance(files[0], dict) else None,
                 )
-                fname = html.escape(primary.get("name", "") if primary else "")
-                fsize = primary.get("sizeKB", 0) if primary else 0
+                fname = html.escape(str(primary.get("name") or "") if primary else "")
+                try:
+                    fsize = float(primary.get("sizeKB") or 0) if primary else 0
+                except (TypeError, ValueError):
+                    fsize = 0
                 size_str = f"{fsize / 1024:.1f}MB" if fsize else "?"
                 parts.append(
                     f'<div style="display:flex;align-items:center;gap:6px;'
@@ -1986,18 +2130,33 @@ def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
 # ═══════════════════════════════════════════════════════════════════
 
 
-def _check_upload_token() -> bool:
-    """Check if we have a valid HF token for registry uploads.
-    Returns True if either config has a real token or the HF hub cache has one."""
-    from huggingface_hub import HfApi
+def _upload_token_problem() -> str | None:
+    """Return why upload is unavailable, or ``None`` when a token exists."""
+    try:
+        from huggingface_hub import HfApi
+    except ImportError:
+        return (
+            "`huggingface_hub` is not installed in this Wan2GP environment. "
+            "Install it with `pip install huggingface_hub` and restart Wan2GP."
+        )
     if _REGISTRY_TOKEN_VALID:
-        return True
+        return None
     try:
         api = HfApi()
         user = api.whoami()
-        return bool(user and user.get("name"))
+        if user and user.get("name"):
+            return None
     except Exception:
-        return False
+        pass
+    return (
+        "\u26a0\ufe0f **No HF token configured.** "
+        "Upload requires a HuggingFace token.\n\n"
+        "1. Go to https://huggingface.co/settings/tokens\n"
+        "2. Create a token (any role)\n"
+        f"3. Edit `{_cfg_path}` and add:\n"
+        '   `{"registry_token": "hf_..."}`\n'
+        "Or run `huggingface-cli login` in your terminal."
+    )
 
 
 def _stamp_hf_username(json_data: dict) -> None:
@@ -2069,9 +2228,20 @@ def _hf_upload(fin_id, json_data, plugin=None):
 
 
 def _fetch_registry_json(fin_id):
-    r = requests.get(f"{DEFAULT_REGISTRY}/finetunes/{fin_id}.json", timeout=10)
-    r.raise_for_status()
-    return r.json()
+    fid = _safe_model_ref(fin_id)
+    if not fid:
+        raise ValueError("unsafe finetune id")
+    url = f"{DEFAULT_REGISTRY}/finetunes/{fid}.json"
+    with fm_security.open_url(
+        url,
+        headers={"User-Agent": "Wan2GP-FinetuneManager/3.7"},
+        timeout=15,
+        allowed_hosts=("huggingface.co", "hf.co"),
+    ) as resp:
+        body = resp.read(fm_security.MAX_JSON_BYTES + 1)
+    if len(body) > fm_security.MAX_JSON_BYTES:
+        raise ValueError("registry JSON is too large")
+    return json.loads(body.decode("utf-8"))
 
 
 def _fetch_dynamic_registry_no_cache() -> list[dict]:
@@ -2089,14 +2259,18 @@ def _fetch_dynamic_registry_no_cache() -> list[dict]:
     except Exception:
         return []
     fins = []
+    seen = set()
     for path in sorted(fin_files):
-        fid = path[len("finetunes/") : -len(".json")]
+        fid = _safe_model_ref(path[len("finetunes/") : -len(".json")])
+        if not fid or fid in seen:
+            continue
         try:
-            r = requests.get(f"{DEFAULT_REGISTRY}/finetunes/{fid}.json", timeout=10)
-            if r.status_code != 200:
+            data = _fetch_registry_json(fid)
+            if not isinstance(data, dict):
                 continue
-            data = r.json()
             m = data.get("model", {})
+            if not isinstance(m, dict):
+                continue
             tags_entry = m.get("tags", [])
             if isinstance(tags_entry, str):
                 tags_entry = [t.strip() for t in tags_entry.split(",") if t.strip()]
@@ -2130,7 +2304,11 @@ def _fetch_dynamic_registry_no_cache() -> list[dict]:
                 },
                 "raw": _clean_utf8(data),
             }
+            security_warnings = _check_bare_filenames(data)
+            if security_warnings:
+                entry["security_warning"] = security_warnings[0]
             fins.append(entry)
+            seen.add(fid)
         except Exception:
             continue
     return fins
@@ -2156,7 +2334,12 @@ def _sanitize_fin_id(fin_id: str) -> str:
     """
     cleaned = _re.sub(r"[^A-Za-z0-9_.-]+", "_", fin_id.strip())
     cleaned = _re.sub(r"_+", "_", cleaned).strip("._-")
-    return cleaned if cleaned else "unnamed"
+    if not cleaned:
+        return "unnamed"
+    # Windows device names (CON, NUL, COM1, ...) must not become file stems.
+    if fm_assets.safe_file_name(f"{cleaned}.json") is None:
+        return f"{cleaned}_finetune"
+    return cleaned
 
 
 def _settings_path_for(fin_id: str) -> Path:
@@ -2172,6 +2355,8 @@ def _resolve_finetune_path(fin_id: str) -> Path | None:
     """
     base = Path(FINETUNES_DIR).resolve()
     for stem in fm_assets.finetune_candidates(fin_id):
+        if fm_assets.safe_file_name(f"{stem}.json") is None:
+            continue
         p = (base / f"{stem}.json").resolve()
         try:
             p.relative_to(base)
@@ -2180,7 +2365,10 @@ def _resolve_finetune_path(fin_id: str) -> Path | None:
         if p.is_file():
             return p
     # Return the exact path when nothing exists so callers can create it.
-    exact = (base / f"{str(fin_id).strip()}.json").resolve()
+    exact_name = str(fin_id).strip()
+    if fm_assets.safe_file_name(f"{exact_name}.json") is None:
+        return None
+    exact = (base / f"{exact_name}.json").resolve()
     try:
         exact.relative_to(base)
         return exact
@@ -2255,6 +2443,16 @@ CARD_CSS = """
 """
 
 
+def _refresh_model_defs(plugin) -> None:
+    """Ask Wan2GP to rescan finetunes after a pack recipe changes."""
+    refresh = getattr(plugin, "refresh_model_defs", None)
+    if callable(refresh):
+        try:
+            refresh()
+        except Exception:
+            pass
+
+
 def _pack_lora_root(plugin) -> Path:
     getter = getattr(plugin, "get_lora_root", None) if plugin is not None else None
     if callable(getter):
@@ -2268,7 +2466,11 @@ def _pack_lora_root(plugin) -> Path:
 
 
 def _pack_md_cell(value) -> str:
-    return str(value or "").replace("|", "\\|").replace("\n", " ")
+    return (
+        html.escape(str(value or ""), quote=False)
+        .replace("|", "\\|")
+        .replace("\n", " ")
+    )
 
 
 def _pack_status_md(manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=None) -> str:
@@ -2296,7 +2498,10 @@ def _pack_status_md(manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, cus
         rows = [x for x in loras if x.get("group") == gid]
         if rows:
             ok = sum(1 for x in rows if x.get("present"))
-            lines.append(f"- {group.get('title') or gid}: {ok}/{len(rows)}")
+            lines.append(
+                f"- {html.escape(str(group.get('title') or gid), quote=False)}: "
+                f"{ok}/{len(rows)}"
+            )
     own = [x for x in loras + fins if x.get("custom")]
     if own:
         ok = sum(1 for x in own if x.get("present") or x.get("weightsPresent"))
@@ -2348,15 +2553,19 @@ def _pack_inventory_md(plugin) -> str:
     inv = fm_pack.lora_inventory(root)
     total = sum(int(x.get("bytes") or 0) for x in inv)
     lines = [
-        f"**{len(inv)} LoRA weight files** in `{root}` - "
-        f"{fm_pack.human_bytes(total)}"
+        f"**{len(inv)} LoRA weight files** in `"
+        + html.escape(str(root), quote=False)
+        + f"` - {fm_pack.human_bytes(total)}"
     ]
     if inv:
         lines.append("")
         for item in inv[:120]:
             mark = "pack" if item.get("known") else ""
             lines.append(
-                f"- `{item.get('rel')}` - {fm_pack.human_bytes(item.get('bytes') or 0)}"
+                "- `"
+                + html.escape(str(item.get("rel") or ""), quote=False)
+                + "` - "
+                + fm_pack.human_bytes(item.get("bytes") or 0)
                 + (f" ({mark})" if mark else "")
             )
         if len(inv) > 120:
@@ -2375,7 +2584,12 @@ def _fmt_update_report(report: dict) -> str:
         bad = [r for r in rows if r.get("status") not in ("ok",)]
         lines.append(f"- **{title}:** {len(rows) - len(bad)}/{len(rows)} ok")
         for row in bad[:40]:
-            lines.append(f"  - `{row.get('id')}` - {row.get('status')}")
+            lines.append(
+                "  - `"
+                + html.escape(str(row.get("id") or ""), quote=False)
+                + "` - "
+                + html.escape(str(row.get("status") or ""), quote=False)
+            )
         if len(bad) > 40:
             lines.append(f"  - ... and {len(bad) - 40} more")
     return "\n".join(lines)
@@ -2385,13 +2599,19 @@ def _fmt_live_report(report: dict) -> str:
     items = report.get("items") or []
     changed = [x for x in items if x.get("status") in ("changed", "missing")]
     lines = [
-        f"#### Live check - {report.get('checkedAt') or ''}",
+        "#### Live check - "
+        + html.escape(str(report.get("checkedAt") or ""), quote=False),
         f"- **{len(items) - len(changed)}/{len(items)}** current; "
         f"**{len(changed)}** need attention.",
     ]
     for item in changed[:60]:
         lines.append(
-            f"  - `{item.get('id')}` ({item.get('kind')}) - {item.get('status')}"
+            "  - `"
+            + html.escape(str(item.get("id") or ""), quote=False)
+            + "` ("
+            + html.escape(str(item.get("kind") or ""), quote=False)
+            + ") - "
+            + html.escape(str(item.get("status") or ""), quote=False)
         )
     if len(changed) > 60:
         lines.append(f"  - ... and {len(changed) - 60} more")
@@ -2402,7 +2622,9 @@ def _fmt_live_report(report: dict) -> str:
             "file is not in the repo tree)."
         )
     for err in (report.get("failed") or [])[:10]:
-        lines.append(f"  - ! {err}")
+        lines.append(
+            "  - ! " + html.escape(str(err or ""), quote=False)
+        )
     if not items:
         lines.append("- Nothing in the catalog to check.")
     return "\n".join(lines)
@@ -2412,7 +2634,7 @@ def _pack_media_html(urls, title="") -> str:
     items = []
     for url in urls or []:
         u = str(url or "").strip()
-        if not u.startswith(("https://", "http://")):
+        if not u.startswith("https://") or fm_security.url_problem(u):
             continue
         safe = html.escape(u, quote=True)
         if u.lower().endswith((".mp4", ".webm", ".mov")):
@@ -2565,28 +2787,37 @@ def _pack_detail_md(row: dict | None) -> str:
     if not row:
         return "Select an item above."
     entry = row.get("entry") or {}
+
+    def _text(value) -> str:
+        return html.escape(str(value or ""), quote=False)
+
     lines = [
-        f"#### {row.get('name')}",
-        f"- **Kind:** {row.get('kind')}",
-        f"- **Family / architecture:** {row.get('family') or '?'} / {row.get('arch') or '?'}",
+        f"#### {_text(row.get('name'))}",
+        f"- **Kind:** {_text(row.get('kind'))}",
+        f"- **Family / architecture:** {_text(row.get('family') or '?')} / "
+        f"{_text(row.get('arch') or '?')}",
         f"- **Size:** {fm_pack.human_bytes(row.get('bytes') or 0)}",
-        f"- **State:** {row.get('state')}",
+        f"- **State:** {_text(row.get('state'))}",
     ]
-    page = str(entry.get("repoPage") or "")
-    if page.startswith("https://"):
-        lines.append(f"- **Source:** [{page}]({page})")
-    file_page = str(entry.get("filePage") or "")
-    if file_page.startswith("https://"):
-        lines.append(f"- **File:** [{entry.get('file')}]({file_page})")
+    page = str(entry.get("repoPage") or "").strip()
+    if page.startswith("https://") and not fm_security.url_problem(page):
+        lines.append(f"- **Source:** {_text(page)}")
+    file_page = str(entry.get("filePage") or "").strip()
+    if file_page.startswith("https://") and not fm_security.url_problem(file_page):
+        lines.append(f"- **File:** {_text(entry.get('file'))} - {_text(file_page)}")
     if entry.get("licenseNote"):
-        lines.append(f"- **Licence:** {entry.get('licenseNote')}")
+        lines.append(f"- **Licence:** {_text(entry.get('licenseNote'))}")
     assets = entry.get("assets") if isinstance(entry.get("assets"), list) else None
     if assets:
         lines.append("")
         lines.append("**Files**")
         for asset in assets:
+            if not isinstance(asset, dict):
+                continue
             status = "present" if asset.get("present") else "missing"
-            lines.append(f"- `{asset.get('path') or asset.get('source')}` - {status}")
+            lines.append(
+                f"- {_text(asset.get('path') or asset.get('source'))} - {status}"
+            )
     return "\n".join(lines)
 
 
@@ -3106,6 +3337,7 @@ def _build_pack_tab(plugin) -> None:
                 except Exception as exc:
                     log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
             fm_pack.save_state(state, _pack_state_path)
+            _refresh_model_defs(self)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3134,6 +3366,7 @@ def _build_pack_tab(plugin) -> None:
                     log.append(f"[OK] wrote {p}")
                 except Exception as exc:
                     log.append(f"[FAIL] {entry.get('name')}: {exc}")
+            _refresh_model_defs(self)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3182,6 +3415,7 @@ def _build_pack_tab(plugin) -> None:
                 except Exception as exc:
                     log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
             fm_pack.save_state(state, _pack_state_path)
+            _refresh_model_defs(self)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3252,6 +3486,7 @@ def _build_pack_tab(plugin) -> None:
                     )
                 except Exception as exc:
                     log.append(f"[FAIL] {entry.get('name')}: {exc}")
+            _refresh_model_defs(self)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3535,6 +3770,7 @@ def _build_pack_tab(plugin) -> None:
             try:
                 msg = _fetch_one(row, progress)
                 fm_pack.save_state(state, _pack_state_path)
+                _refresh_model_defs(self)
             except Exception as exc:
                 msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
             return (
@@ -3560,6 +3796,7 @@ def _build_pack_tab(plugin) -> None:
                 )
             try:
                 p = fm_pack.write_recipe(row["entry"], finetunes_dir)
+                _refresh_model_defs(self)
                 msg = f"[OK] wrote {p}"
             except Exception as exc:
                 msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
@@ -3592,6 +3829,7 @@ def _build_pack_tab(plugin) -> None:
                     fm_pack.drop_custom(row["id"])
                     done = True
                 fm_pack.save_state(state, _pack_state_path)
+                _refresh_model_defs(self)
                 msg = (
                     f"[OK] {entry.get('name')}: deleted"
                     if done
@@ -4114,14 +4352,14 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 tg = [t.strip() for t in tg.split(",") if t.strip()]
                             if not isinstance(tg, list):
                                 return False
-                            return any(s in (tag or "").lower() for tag in tg)
+                            return any(s in str(tag or "").lower() for tag in tg)
 
                         ff = [
                             f
                             for f in ff
-                            if s in f.get("name", "").lower()
-                            or s in (f.get("description", "") or "").lower()
-                            or s in f.get("author", "").lower()
+                            if s in str(f.get("name") or "").lower()
+                            or s in str(f.get("description") or "").lower()
+                            or s in str(f.get("author") or "").lower()
                             or _match_tags(f)
                         ]
                     if family and family != "All":
@@ -4139,7 +4377,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 if not isinstance(tg, list):
                                     return False
                                 return any(
-                                    (tag or "").strip().lower() == tf for tag in tg
+                                    str(tag or "").strip().lower() == tf for tag in tg
                                 )
 
                             ff = [f for f in ff if _filter_tags(f)]
@@ -4154,7 +4392,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         key=lambda f: _family_sort_key(
                             catalog,
                             f.get("family") or _FAMILY_UNKNOWN,
-                            f.get("name", f.get("id", "")),
+                            str(f.get("name", f.get("id", "")) or ""),
                         )
                     )
                     counts = {}
@@ -4189,6 +4427,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 is_variant=bool(f.get("source")),
                                 family_label=_family_label(catalog, fam),
                                 family_warning=f.get("family_warning", ""),
+                                security_warning=f.get("security_warning", ""),
                             )
                         )
                     _h.append("</div>")
@@ -4203,7 +4442,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             tg = [t.strip() for t in tg.split(",") if t.strip()]
                         if isinstance(tg, list):
                             for t in tg:
-                                t = t.strip().lower()
+                                t = str(t or "").strip().lower()
                                 if t:
                                     seen.add(t)
                     return sorted(seen)
@@ -4307,7 +4546,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if isinstance(detail_raw, dict):
                         all_entries = _collect_url_entries(detail_raw)
                         val_html = _build_url_validation_html(
-                            _validate_urls(all_entries, self)
+                            _validate_urls(all_entries, self, network=False)
                         )
                     else:
                         val_html = ""
@@ -4341,7 +4580,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = _fetch_registry_json(fid)
                     except Exception as e:
                         return f"Error: {e}", gr.update(), gr.update()
-                    err = _validate_finetune_data(data)
+                    err = _validate_finetune_data(data, registry=True)
                     if err:
                         return f"Cannot load '{fid}': {err}", gr.update(), gr.update()
                     _write_finetune(fid, data)
@@ -4367,7 +4606,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = _fetch_registry_json(fid)
                     except Exception as e:
                         return f"Error: {e}"
-                    err = _validate_finetune_data(data)
+                    err = _validate_finetune_data(data, registry=True)
                     if err:
                         return f"Cannot download '{fid}': {err}"
                     _write_finetune(fid, data)
@@ -4394,7 +4633,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         data = _fetch_registry_json(fid)
                     except Exception as e:
                         return [gr.update()] * (len(ALL_INPUTS)) + [gr.update(), f"Error: {e}", {}]
-                    err = _validate_finetune_data(data)
+                    err = _validate_finetune_data(data, registry=True)
                     if err:
                         return [gr.update()] * (len(ALL_INPUTS)) + [
                             gr.update(),
@@ -4686,37 +4925,29 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             u = (u or "").strip()
                             if not u:
                                 return ""
-                            # Model reference =id
                             if u.startswith("="):
                                 mid = u[1:].strip()
                                 if mid in MODEL_INDEX:
                                     data = _read_model_json(mid)
-                                    if data:
-                                        urls = _get_model_urls(data)
-                                        if urls:
-                                            return (
-                                                f'<span style="font-size:11px">'
-                                                f"\u2705 {MODEL_INDEX[mid]}"
-                                                f"<br/>&nbsp;&nbsp;\u2192 "
-                                                f"{urls[0]}</span>"
-                                            )
-                                    return (
-                                        f'<span style="font-size:11px">'
-                                        f"\u2705 {MODEL_INDEX[mid]}</span>"
-                                    )
-                                return (
-                                    f'<span style="font-size:11px;'
-                                    f'color:#dc2626">\u274c {mid} not in '
-                                    f"list \u2014 enter a URL or upload a file instead</span>"
+                                    urls = _get_model_urls(data) if data else []
+                                    msg = MODEL_INDEX[mid]
+                                    if urls:
+                                        msg += f"\n\u2192 {urls[0]}"
+                                    return _led(True, msg, size=11)
+                                return _led(
+                                    False,
+                                    f"{mid} not in list \u2014 enter a URL or upload a file instead",
+                                    size=11,
                                 )
-                            # HTTP/HTTPS URL
                             if u.startswith(("http:", "https:")):
-                                return (
-                                    f'<span style="font-size:11px">'
-                                    f"\u2705 URL format OK \u2014 use "
-                                    f"Validate button to check</span>"
+                                problem = fm_security.url_problem(u)
+                                if problem:
+                                    return _led(False, problem, size=11)
+                                return _led(
+                                    True,
+                                    "URL format OK \u2014 use Validate button to check",
+                                    size=11,
                                 )
-                            # Bare model ID (not a path, not a URL)
                             if (
                                 not u.startswith(("/", ".", "\\"))
                                 and "/" not in u
@@ -4725,41 +4956,21 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             ):
                                 if u in MODEL_INDEX:
                                     data = _read_model_json(u)
-                                    if data:
-                                        urls = _get_model_urls(data)
-                                        if urls:
-                                            return (
-                                                f'<span style="font-size:11px">'
-                                                f"\u2705 {MODEL_INDEX[u]}"
-                                                f"<br/>&nbsp;&nbsp;\u2192 "
-                                                f"{urls[0]}</span>"
-                                            )
-                                    return (
-                                        f'<span style="font-size:11px">'
-                                        f"\u2705 {MODEL_INDEX[u]}</span>"
-                                    )
-                                if _looks_like_file(u):
-                                    if _check_disk_exists(u):
-                                        return (
-                                            f'<span style="font-size:11px">'
-                                            f"\u2705 Found on disk</span>"
-                                        )
-                                return (
-                                    f'<span style="font-size:11px;'
-                                    f'color:#dc2626">\u274c {u} not in '
-                                    f"list \u2014 enter a URL or upload a file instead</span>"
+                                    urls = _get_model_urls(data) if data else []
+                                    msg = MODEL_INDEX[u]
+                                    if urls:
+                                        msg += f"\n\u2192 {urls[0]}"
+                                    return _led(True, msg, size=11)
+                                if _looks_like_file(u) and _check_disk_exists(u):
+                                    return _led(True, "Found on disk", size=11)
+                                return _led(
+                                    False,
+                                    f"{u} not in list \u2014 enter a URL or upload a file instead",
+                                    size=11,
                                 )
-                            # Local path
                             if _check_disk_exists(u):
-                                return (
-                                    f'<span style="font-size:11px">'
-                                    f"\u2705 Found on disk</span>"
-                                )
-                            return (
-                                f'<span style="font-size:11px;'
-                                f'color:#dc2626">\u274c File not found'
-                                f"</span>"
-                            )
+                                return _led(True, "Found on disk", size=11)
+                            return _led(False, "File not found", size=11)
 
                         def _lora_compute(urls, mults):
                             loras_out = [
@@ -5134,12 +5345,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if first_line.startswith("="):
                             mid = first_line[1:].strip()
                             ok, msg = _validate_model_ref(mid, self)
-                            icon = "\u2705" if ok else "\u274c"
-                            val_results.append(
-                                gr.update(
-                                    value=f"<span style='font-size:12px'>{icon} {msg}</span>"
-                                )
-                            )
+                            val_results.append(gr.update(value=_led(ok, msg)))
                             ref_results.append(gr.update(value=mid))
                         elif (
                             "/" not in first_line
@@ -5148,12 +5354,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             and not (len(first_line) > 1 and first_line[1] == ":")
                         ):
                             ok, msg = _validate_model_ref(first_line, self)
-                            icon = "\u2705" if ok else "\u274c"
-                            val_results.append(
-                                gr.update(
-                                    value=f"<span style='font-size:12px'>{icon} {msg}</span>"
-                                )
-                            )
+                            val_results.append(gr.update(value=_led(ok, msg)))
                             ref_results.append(
                                 gr.update(value=first_line if ok else None)
                             )
@@ -5167,21 +5368,16 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 # No-network validation — only format checks + cached disk.
                                 # Full HEAD reachability is covered by Validate button.
                                 if line.startswith(("http:", "https:")):
-                                    parts.append(
-                                        f'<span style="font-size:11px">'
-                                        f"\u2705 URL format OK \u2014 use "
-                                        f"Validate button to check</span>"
-                                    )
+                                    parts.append(_led(True, "URL format OK \u2014 use Validate button to check", size=11))
                                 elif _check_disk_exists(line):
-                                    parts.append(
-                                        f'<span style="font-size:11px">'
-                                        f"\u2705 Found on disk</span>"
-                                    )
+                                    parts.append(_led(True, "Found on disk", size=11))
                                 else:
                                     parts.append(
-                                        f'<span style="font-size:11px;'
-                                        f'color:#dc2626">\u274c {line} \u2014 '
-                                        f"use Validate button to check</span>"
+                                        _led(
+                                            False,
+                                            f"{line} \u2014 use Validate button to check",
+                                            size=11,
+                                        )
                                     )
                             val_results.append(gr.update(value="<br>".join(parts)))
                     return tuple(ref_results) + tuple(val_results)
@@ -5436,16 +5632,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         vals = remaining
                     if not id_:
                         return "Enter an ID"
-                    if not _check_upload_token():
-                        return (
-                            "⚠️ **No HF token configured.** "
-                            "Upload requires a HuggingFace token.\n\n"
-                            "1. Go to https://huggingface.co/settings/tokens\n"
-                            "2. Create a token (any role)\n"
-                            f"3. Edit `{_cfg_path}` and add:\n"
-                            '   `{"registry_token": "hf_..."}`\n'
-                            "Or run `huggingface-cli login` in your terminal."
-                        )
+                    token_problem = _upload_token_problem()
+                    if token_problem:
+                        return token_problem
                     data = _build(*vals, extra_data=extra_data)
                     bare_warnings = _check_bare_filenames(data)
                     if bare_warnings:
@@ -5638,12 +5827,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         field_parts = []
                         for line in lines:
                             valid, msg = _validate_entry(line, self)
-                            color = "#16a34a" if valid else "#dc2626"
-                            icon = "\u2713" if valid else "\u2717"
-                            field_parts.append(
-                                f"<span style='font-size:11px;color:{color}'>"
-                                f"{icon} {msg}</span>"
-                            )
+                            field_parts.append(_led(valid, msg, size=11))
                         per_field.append(gr.update(value="<br>".join(field_parts)))
                     return tuple([aggregate_html] + per_field)
 
@@ -5683,8 +5867,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             return (gr.update(), gr.update(), gr.update())
                         # Validate the model ref
                         ok, msg = _validate_model_ref(mid, self)
-                        icon = "\u2705" if ok else "\u274c"
-                        val_html = f"<span style='font-size:12px'>{icon} {msg}</span>"
+                        val_html = _led(ok, msg)
                         return (
                             gr.update(value=val_text),
                             gr.update(value=None),
@@ -5712,8 +5895,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         mid = first_line
                     if mid:
                         ok, msg = _validate_model_ref(mid, self)
-                        icon = "\u2705" if ok else "\u274c"
-                        val_html = f"<span style='font-size:12px'>{icon} {msg}</span>"
+                        val_html = _led(ok, msg)
                         return (
                             gr.update(value=mid if ok else None),
                             gr.update(value=val_html),
@@ -5723,41 +5905,41 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     parts = []
                     for line in lines:
                         if line.startswith(("http:", "https:")):
-                            parts.append(
-                                "<span style='font-size:11px'>"
-                                "\u2705 URL format OK — use Validate button "
-                                "to check availability</span>"
-                            )
+                            problem = fm_security.url_problem(line)
+                            if problem:
+                                parts.append(_led(False, problem, size=11))
+                            else:
+                                parts.append(
+                                    _led(
+                                        True,
+                                        "URL format OK \u2014 use Validate button "
+                                        "to check availability",
+                                        size=11,
+                                    )
+                                )
                         elif line.startswith(("/", ".", "\\")) or (
                             len(line) > 1 and line[1] == ":"
                         ):
                             ok, msg = _validate_local_path(line)
-                            icon = "\u2705" if ok else "\u274c"
-                            parts.append(
-                                f"<span style='font-size:11px'>{icon} {msg}</span>"
-                            )
+                            parts.append(_led(ok, msg, size=11))
                         else:
                             # Bare string — treat as potential model ref
                             data = _read_model_json(line)
                             if data:
                                 name = data.get("model", {}).get("name", line)
                                 urls = _get_model_urls(data)
+                                msg = f"Model ref: {name}"
                                 if urls:
-                                    parts.append(
-                                        "<span style='font-size:11px'>"
-                                        f"\u2705 Model ref: {name}"
-                                        f"<br/>&nbsp;&nbsp;\u2192 {urls[0]}</span>"
-                                    )
-                                else:
-                                    parts.append(
-                                        "<span style='font-size:11px'>"
-                                        f"\u2705 Model ref: {name}</span>"
-                                    )
+                                    msg += f"\n\u2192 {urls[0]}"
+                                parts.append(_led(True, msg, size=11))
                             else:
                                 parts.append(
-                                    "<span style='font-size:11px;color:#dc2626'>"
-                                    f"\u274c '{line}' not in list — "
-                                    "enter a URL or upload a file instead</span>"
+                                    _led(
+                                        False,
+                                        f"'{line}' not in list \u2014 enter a URL "
+                                        "or upload a file instead",
+                                        size=11,
+                                    )
                                 )
                     val_html = "<br>".join(parts)
                     return (gr.update(value=None), gr.update(value=val_html))
@@ -6312,7 +6494,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     data = json.loads(Path(s).read_text(encoding="utf-8"))
                 except Exception as e:
                     return _failed(f"Invalid: {e}")
-                err = _validate_finetune_data(data)
+                err = _validate_finetune_data(data, registry=True)
                 if err:
                     return _failed(f"Cannot import: {err}")
                 fid = _sanitize_fin_id(Path(s).stem)
@@ -6349,16 +6531,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             def _up(fid):
                 if not fid:
                     return "Select one"
-                if not _check_upload_token():
-                    return (
-                        "⚠️ **No HF token configured.** "
-                        "Upload requires a HuggingFace token.\n\n"
-                        "1. Go to https://huggingface.co/settings/tokens\n"
-                        "2. Create a token (any role)\n"
-                        f"3. Edit `{_cfg_path}` and add:\n"
-                        '   `{"registry_token": "hf_..."}`\n'
-                        "Or run `huggingface-cli login` in your terminal."
-                    )
+                token_problem = _upload_token_problem()
+                if token_problem:
+                    return token_problem
                 p = _resolve_finetune_path(fid)
                 if not p or not p.exists():
                     return "Not found"
@@ -6366,7 +6541,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     data = json.loads(p.read_text(encoding="utf-8"))
                 except Exception as e:
                     return f"Cannot upload: invalid JSON ({e})"
-                err = _validate_finetune_data(data)
+                err = _validate_finetune_data(data, registry=True)
                 if err:
                     return f"Cannot upload: {err}"
                 token_urls = _find_token_urls(data)

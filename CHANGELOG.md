@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.7.1 (2026-10-22)
+
+### Security
+- **One URL policy for every outbound request** - new `fm_security.py` rejects non-HTTPS schemes, credentials, loopback/private/link-local addresses, blocked local suffixes, and redirect hops outside the same allowlist. Registry, CivitAI and download traffic now go through it instead of raw `requests`/`urlopen`.
+- **Downloaded registry recipes are untrusted** - strict validation rejects bare filenames, local paths, dangerous schemes, and embedded HTML before a recipe can be loaded or improved. Unsafe entries are badged in Browse instead of silently breaking the editor.
+- **Redirect and token handling** - Authorization and Cookie headers are stripped on cross-host redirects; CivitAI tokens are only attached to CivitAI hosts and upload refuses URLs that embed `token=`.
+- **Path and XSS hardening** - Windows device names are rejected as file stems, pack deletion is contained to its roots, and registry/catalog text is HTML-escaped before it reaches Markdown, cards, or the HF Space. The Space also caps JSON size and escapes quotes in attributes.
+
+### Fixed
+- **Blocked redirects were reported as valid** - `probe_url()` returned the redirect's 302 as a successful status; it now returns the policy error.
+- **Malformed registry and CivitAI fields could break rendering** - non-string names/tags/URLs are coerced or skipped instead of raising inside card and result builders.
+
+### Changed
+- Bumped version to 3.7.1 (plugin.py, plugin_info.json, README, user guide).
+
 ## v3.7.0 (2026-10-21)
 
 ### Added
