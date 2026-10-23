@@ -816,9 +816,30 @@ def resolve_civitai_version(
     raise ValueError(f'no CivitAI release found for "{query}"')
 
 
+CIVITAI_WEIGHT_TYPES = frozenset(
+    {
+        "",
+        "model",
+        "diffusion model",
+        "pruned model",
+        "unet",
+        "checkpoint",
+        "lora",
+        "locon",
+        "dora",
+    }
+)
+
+
 def civitai_weight_file(file: dict) -> bool:
-    ftype = str(file.get("type") or "")
-    return not ftype or ftype == "Model"
+    """True when a CivitAI version file is model weight, not an accessory.
+
+    ``Model`` is the generic value, but checkpoints converted from other
+    ecosystems are published as ``Diffusion Model`` or ``UNet``. Accepting
+    those is required for MiniMax H3 and several ComfyUI-origin checkpoints;
+    training data, previews, VAEs, configs and text encoders stay excluded.
+    """
+    return str(file.get("type") or "").strip().lower() in CIVITAI_WEIGHT_TYPES
 
 
 def _civitai_file_name(file: dict, download_url: str) -> str:
@@ -837,6 +858,23 @@ def _civitai_sha(file: dict) -> str | None:
     return None
 
 
+CIVITAI_LORA_TYPES = ("LORA", "LOCON", "DORA")
+
+
+def civitai_kind(model_type: str | None) -> str | None:
+    """Map a CivitAI model ``type`` to the Wan2GP asset kind.
+
+    Returns ``"lora"`` or ``"checkpoint"``; ``None`` for entries that are not
+    model weights (workflows, archives, training data, embeddings, ...).
+    """
+    value = str(model_type or "").strip().upper()
+    if value in CIVITAI_LORA_TYPES:
+        return "lora"
+    if value == "CHECKPOINT":
+        return "checkpoint"
+    return None
+
+
 def _civitai_kind(spec: dict, meta: dict) -> str:
     declared = str(spec.get("kind") or "").strip().lower()
     if declared in ("lora", "locon", "dora"):
@@ -844,8 +882,218 @@ def _civitai_kind(spec: dict, meta: dict) -> str:
     if declared:
         return "checkpoint"
     model = meta.get("model") if isinstance(meta.get("model"), dict) else {}
-    api_kind = str(model.get("type") or "").strip().lower()
-    return "lora" if api_kind in ("lora", "locon", "dora") else "checkpoint"
+    return civitai_kind(model.get("type")) or "checkpoint"
+
+
+def civitai_file_url(file: dict, site: str = "civitai.com") -> str:
+    """Absolute download URL for one CivitAI file entry."""
+    value = str(file.get("downloadUrl") or "").strip()
+    if value.startswith("/"):
+        host = site if site in CIVITAI_SITES else CIVITAI_SITES[0]
+        value = f"https://{host}{value}"
+    return value
+
+
+def civitai_recipe_url(file: dict, site: str = "civitai.com") -> str:
+    """Download URL that Wan2GP saves under the file's real name.
+
+    CivitAI's download endpoint ends in the version id, so Wan2GP would save
+    ``2466604`` instead of ``name.gguf``. A URL fragment is never sent to the
+    server and ``files_locator.extract_alternate_path`` takes the basename of
+    the whole string, so ``...#/name.gguf`` downloads normally while landing
+    as ``name.gguf``.
+    """
+    url = civitai_file_url(file, site)
+    name = _civitai_file_name(file, url)
+    base = _basename(url.split("|", 1)[0].split("#", 1)[0])
+    if base == name:
+        return url
+    return f"{url.split('#', 1)[0]}#/{name}"
+
+
+def civitai_weight_files(
+    files: Iterable[dict], *, primary_only: bool = False
+) -> list[dict]:
+    """Loadable weight files of one CivitAI version.
+
+    CivitAI puts every format of a release in ``files``. ``primary_only``
+    keeps just the files CivitAI marks primary (or the first file when the
+    release does not mark one), which is what a recipe should reference.
+    """
+    weights = [
+        file
+        for file in (files or [])
+        if isinstance(file, dict)
+        and civitai_weight_file(file)
+        and str(file.get("downloadUrl") or "").strip()
+    ]
+    if primary_only:
+        primary = [file for file in weights if file.get("primary")]
+        return primary or weights[:1]
+    return weights
+
+
+def civitai_download_urls(
+    version: dict,
+    *,
+    site: str = "civitai.com",
+    primary_only: bool = False,
+) -> list[str]:
+    files = version.get("files") if isinstance(version, dict) else []
+    return [
+        civitai_file_url(file, site)
+        for file in civitai_weight_files(files, primary_only=primary_only)
+    ]
+
+
+def civitai_plain_text(value: Any, limit: int = 1200) -> str:
+    """Strip CivitAI's HTML descriptions into a compact plain-text blurb."""
+    import html as _html
+
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    text = _html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def civitai_recipe(
+    model: dict,
+    version: dict,
+    *,
+    architecture: str = "",
+    primary_only: bool = False,
+    site: str = "civitai.com",
+) -> dict:
+    """Build a Wan2GP finetune recipe for one CivitAI version.
+
+    The recipe references the public CivitAI download URLs, so Wan2GP can
+    fetch the weights later. Each URL carries a ``#/filename`` fragment so
+    Wan2GP saves it under the real name instead of the numeric version id.
+    API tokens are never embedded: the plugin's own Download button supplies
+    the token at request time.
+    """
+    model = model if isinstance(model, dict) else {}
+    version = version if isinstance(version, dict) else {}
+    kind = civitai_kind(model.get("type"))
+    if kind is None:
+        raise ValueError(
+            f"CivitAI type '{model.get('type') or 'unknown'}' is not a "
+            "checkpoint or LoRA"
+        )
+    files = civitai_weight_files(
+        version.get("files") or [], primary_only=primary_only
+    )
+    if not files:
+        raise ValueError("this CivitAI release has no downloadable weight file")
+    urls = [civitai_recipe_url(file, site) for file in files]
+    model_name = str(model.get("name") or "CivitAI model").strip()
+    version_name = str(version.get("name") or "").strip()
+    name = f"{model_name} \u2014 {version_name}" if version_name else model_name
+
+    notes: list[str] = []
+    base = str(version.get("baseModel") or "").strip()
+    if base:
+        notes.append(f"Base model: {base}")
+    model_id = model.get("id")
+    version_id = version.get("id")
+    if model_id and version_id:
+        host = site if site in CIVITAI_SITES else CIVITAI_SITES[0]
+        notes.append(
+            f"Source: https://{host}/models/{model_id}"
+            f"?modelVersionId={version_id}"
+        )
+    description = civitai_plain_text(model.get("description"))
+    if description:
+        notes.append(description)
+
+    entry: dict[str, Any] = {"name": name}
+    if architecture:
+        entry["architecture"] = str(architecture)
+    if notes:
+        entry["description"] = "\n\n".join(notes)
+    if kind == "lora":
+        entry["loras"] = urls
+        entry["loras_multipliers"] = [1] * len(urls)
+    else:
+        names = [
+            _civitai_file_name(file, url) for file, url in zip(files, urls)
+        ]
+        high, low = split_halves(names, urls)
+        entry["URLs"] = high
+        if low:
+            entry["URLs2"] = low
+    tags = [
+        str(tag).strip()
+        for tag in (model.get("tags") or [])
+        if isinstance(tag, str) and str(tag).strip()
+    ]
+    tags = list(dict.fromkeys(["civitai"] + tags))[:12]
+    if tags:
+        entry["tags"] = tags
+    return {"model": entry}
+
+
+def install_civitai_version(
+    version: dict,
+    dest_dir: str | Path,
+    *,
+    token: str | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
+    primary_only: bool = False,
+    site: str = "civitai.com",
+    label: str = "",
+) -> dict:
+    """Download one CivitAI version's weight files into ``dest_dir``.
+
+    Returns ``{"files": [...], "paths": [...], "bytes": n, "errors": [...]}``.
+    A failed file does not stop the remaining files; the caller formats the
+    error list. The destination is chosen by the caller so checkpoints and
+    LoRAs land in the folder Wan2GP scans for them.
+    """
+    version = version if isinstance(version, dict) else {}
+    files = civitai_weight_files(
+        version.get("files") or [], primary_only=primary_only
+    )
+    if not files:
+        raise ValueError("this CivitAI release has no downloadable weight file")
+    destination = Path(dest_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    saved: list[str] = []
+    paths: list[str] = []
+    errors: list[str] = []
+    total = 0
+    for file in files:
+        url = civitai_file_url(file, site)
+        name = _civitai_file_name(file, url)
+        sha = _civitai_sha(file)
+        expected = int(round(float(file.get("sizeKB") or 0) * 1024))
+        target = destination / name
+        try:
+            result = download_verified(
+                url,
+                target,
+                sha256=sha,
+                expected_bytes=0 if sha else expected,
+                token=token,
+                progress=progress,
+                label=label or name,
+                # CivitAI redirects downloads to its CDN; the URL still comes
+                # from CivitAI's own API, and fm_security still blocks
+                # private hosts and plain HTTP.
+                allowed_hosts=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported per file
+            errors.append(f"{name}: {exc}")
+            continue
+        total += int(result.get("bytes") or 0)
+        saved.append(name)
+        paths.append(str(target))
+    return {
+        "files": saved,
+        "paths": paths,
+        "bytes": total,
+        "errors": errors,
+        "dir": str(destination),
+    }
 
 
 def fetch_civitai(

@@ -8,6 +8,7 @@ Run with::
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -139,6 +140,155 @@ class CivitaiTests(unittest.TestCase):
         )
         self.assertEqual(high, ["/x/a_high.safetensors"])
         self.assertEqual(low, ["/x/b_low.safetensors"])
+
+    def test_kind_mapping(self):
+        self.assertEqual(fm_pack.civitai_kind("LORA"), "lora")
+        self.assertEqual(fm_pack.civitai_kind("LoCon"), "lora")
+        self.assertEqual(fm_pack.civitai_kind("DoRA"), "lora")
+        self.assertEqual(fm_pack.civitai_kind("Checkpoint"), "checkpoint")
+        self.assertIsNone(fm_pack.civitai_kind("Workflows"))
+        self.assertIsNone(fm_pack.civitai_kind(None))
+
+    @staticmethod
+    def _version():
+        return {
+            "id": 99,
+            "name": "Q8 High",
+            "baseModel": "Wan Video 2.2 I2V-A14B",
+            "files": [
+                {
+                    "name": "model_high.gguf",
+                    "type": "Model",
+                    "primary": True,
+                    "sizeKB": 1024,
+                    "downloadUrl": "https://civitai.com/api/download/models/99",
+                    "hashes": {"SHA256": "a" * 64},
+                },
+                {
+                    "name": "model_low.gguf",
+                    "type": "Model",
+                    "primary": False,
+                    "sizeKB": 1024,
+                    "downloadUrl": "https://civitai.com/api/download/models/100",
+                },
+                {
+                    "name": "preview.png",
+                    "type": "Image",
+                    "primary": False,
+                    "downloadUrl": "https://civitai.com/api/download/models/101",
+                },
+            ],
+        }
+
+    def test_primary_only_skips_secondary_and_non_weights(self):
+        files = fm_pack.civitai_weight_files(
+            self._version()["files"], primary_only=True
+        )
+        self.assertEqual([f["name"] for f in files], ["model_high.gguf"])
+        all_files = fm_pack.civitai_weight_files(self._version()["files"])
+        self.assertEqual(
+            [f["name"] for f in all_files],
+            ["model_high.gguf", "model_low.gguf"],
+        )
+
+    def test_recipe_url_keeps_the_real_filename(self):
+        url = fm_pack.civitai_recipe_url(
+            {
+                "name": "model high.gguf",
+                "downloadUrl": "https://civitai.com/api/download/models/99",
+            }
+        )
+        self.assertEqual(os.path.basename(url), "model high.gguf")
+        self.assertEqual(
+            url.split("#", 1)[0], "https://civitai.com/api/download/models/99"
+        )
+
+    def test_recipe_url_leaves_named_urls_alone(self):
+        url = "https://example.test/files/model.safetensors"
+        self.assertEqual(
+            fm_pack.civitai_recipe_url(
+                {"name": "model.safetensors", "downloadUrl": url}
+            ),
+            url,
+        )
+
+    def test_checkpoint_recipe_splits_high_low(self):
+        model = {
+            "id": 7,
+            "name": "Tasty Model",
+            "type": "Checkpoint",
+            "description": "<p>Hello <b>world</b></p>",
+            "tags": ["wan", "wan"],
+        }
+        recipe = fm_pack.civitai_recipe(
+            model, self._version(), architecture="i2v_2_2"
+        )["model"]
+        self.assertEqual(recipe["architecture"], "i2v_2_2")
+        self.assertEqual(
+            [os.path.basename(u) for u in recipe["URLs"]], ["model_high.gguf"]
+        )
+        self.assertEqual(
+            [os.path.basename(u) for u in recipe["URLs2"]], ["model_low.gguf"]
+        )
+        self.assertIn("Hello world", recipe["description"])
+        self.assertEqual(recipe["tags"], ["civitai", "wan"])
+
+    def test_lora_recipe_goes_to_loras(self):
+        model = {"id": 8, "name": "Style LoRA", "type": "LORA"}
+        version = {
+            "id": 9,
+            "name": "v1",
+            "files": [
+                {
+                    "name": "style.safetensors",
+                    "type": "Model",
+                    "primary": True,
+                    "downloadUrl": "https://civitai.com/api/download/models/9",
+                }
+            ],
+        }
+        recipe = fm_pack.civitai_recipe(
+            model, version, architecture="i2v_2_2", primary_only=True
+        )["model"]
+        self.assertNotIn("URLs", recipe)
+        self.assertEqual(
+            [os.path.basename(u) for u in recipe["loras"]], ["style.safetensors"]
+        )
+        self.assertEqual(recipe["loras"][0].split("#", 1)[0],
+                         "https://civitai.com/api/download/models/9")
+        self.assertEqual(recipe["loras_multipliers"], [1])
+
+    def test_install_writes_into_requested_folder(self):
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(
+                fm_pack,
+                "download_verified",
+                return_value={"status": "downloaded", "bytes": 10},
+            ) as download:
+                result = fm_pack.install_civitai_version(
+                    self._version(), td, token="key"
+                )
+            self.assertEqual(
+                result["files"], ["model_high.gguf", "model_low.gguf"]
+            )
+            self.assertEqual(len(result["paths"]), 2)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(
+                [Path(call.args[1]).parent for call in download.call_args_list],
+                [Path(td), Path(td)],
+            )
+
+    def test_install_reports_per_file_errors(self):
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(
+                fm_pack,
+                "download_verified",
+                side_effect=[ValueError("server returned text/html"), {"bytes": 5}],
+            ):
+                result = fm_pack.install_civitai_version(self._version(), td)
+            self.assertEqual(result["files"], ["model_low.gguf"])
+            self.assertEqual(len(result["errors"]), 1)
+            self.assertIn("model_high.gguf", result["errors"][0])
 
 
 class InventoryTests(unittest.TestCase):

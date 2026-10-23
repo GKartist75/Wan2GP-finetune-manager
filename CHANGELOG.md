@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.7.6 (2026-10-23)
+
+### Added
+- **CivitAI actions** - the CivitAI tab now offers **Fill Selected** into Create/Edit, **Download selected** into the folder Wan2GP scans, and **Create finetune.json**. Downloads route checkpoints to `ckpts/` and LoRAs to `loras/<architecture>/`; recipes store public URLs only.
+- **Real filenames in CivitAI recipes** - CivitAI download URLs end in a numeric version id. Recipe/fill URLs now append a `#/filename.ext` fragment: the fragment is never sent to the server, while Wan2GP's `files_locator` takes the basename of the whole URL, so files land as `name.gguf` / `name.safetensors`. `fm_assets.url_file_name()` recognises the same fragment for inventory and destination checks.
+- **Tests** - filename-preserving recipe URLs, high/low split names, LoRA recipe names, and fragment-aware asset inventory.
+
+### Fixed
+- **Fill Selected did nothing** - pressing the button with no result version selected returned a blank status, so nothing visible happened. The handler now reports what is missing ("Select a result version first…", "no downloadable weight file", unsupported CivitAI type) and fills the name, architecture, description, tags and URL fields from the selected model.
+- **Pack buttons raised `NameError: self`** - Pack **Download selected**, **Create recipes**, **Delete selected recipes/weights**, and the Catalog download/recipe/delete actions refreshed Wan2GP through an undefined `self` after completing their work. They now use the tab's host reference.
+- **Dynamic dropdowns rejected refreshed values** - Catalog family, Find architecture, link architecture, and Pack LoRA/recipe/CivitAI selections now set `allow_custom_value=True`, so values added after the tab was built are not rejected.
+- **Empty CivitAI search** - pressing Search with no query/filter now shows guidance in the status line instead of clearing it.
+
+### Documentation
+- Corrected the token paragraph: the CivitAI key is used by searches and **Download selected**, never embedded in filled URLs or recipes.
+- Bumped version to 3.7.6 (plugin.py, plugin_info.json, README, user guide).
+
 ## v3.7.5 (2026-10-22)
 
 ### Security

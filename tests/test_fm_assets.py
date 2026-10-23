@@ -23,6 +23,20 @@ class SourceParsingTests(unittest.TestCase):
             "model.safetensors",
         )
 
+    def test_url_filename_override_fragment(self):
+        self.assertEqual(
+            fm_assets.url_file_name(
+                "https://civitai.com/api/download/models/99#/My Model.gguf"
+            ),
+            "My Model.gguf",
+        )
+        remote, url, sub, name = fm_assets.parse_source(
+            "https://civitai.com/api/download/models/99#/My Model.gguf|wan"
+        )
+        self.assertEqual(url, "https://civitai.com/api/download/models/99#/My Model.gguf")
+        self.assertEqual(sub, "wan")
+        self.assertEqual(name, "My Model.gguf")
+
     def test_url_suffix_is_split(self):
         remote, url, sub, name = fm_assets.parse_source(
             "https://example.test/model.safetensors?download=1|adult-pack/wan"

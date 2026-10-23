@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "title": "Adult (NSFW) model pack",
-  "generatedAt": "2026-10-20T20:45:31.744Z",
+  "generatedAt": "2026-10-23T00:00:00.000Z",
   "verifiedAgainst": {
     "wan2gp": "v18.17",
     "inventoryCount": 270,
@@ -756,8 +756,8 @@
   "totals": {
     "loraFiles": 115,
     "loraBytes": 78574045066,
-    "loraDefaultFiles": 54,
-    "loraDefaultBytes": 23052221452,
+    "loraDefaultFiles": 38,
+    "loraDefaultBytes": 19585100524,
     "prefetchBytes": 10849052416
   },
   "loras": [
@@ -912,7 +912,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=iGoon%20-%20Blink_Missionary_I2V&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -943,7 +943,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=iGoon%20-%20Blink_Missionary_I2V%20v2&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -974,7 +974,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=iGoon%20-%20Blink_Missionary_I2V&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1005,7 +1005,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=iGOON_Blink_B%20job_I2V&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1036,7 +1036,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=iGOON_Blink_B%20job_I2V&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1067,7 +1067,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=iGoon_Blink_Missionary_I2V%20v2&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1532,7 +1532,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=mql_doggy_a_wan22_t2v_v1%20_noise&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1563,7 +1563,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=mql_doggy_a_wan22_t2v_v1%20_noise&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1780,7 +1780,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=PENISLORA_22_i2v%20_e320&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -1811,7 +1811,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=PENISLORA_22_i2v%20_e496&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -2066,7 +2066,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=W22_Multiscene_Photoshoot_Softcore_i2v_HN&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -2097,7 +2097,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=W22_Multiscene_Photoshoot_Softcore_i2v_LN&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -2128,7 +2128,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=WAN-2.2-I2V-Double-B%20job%20-v1&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -2159,7 +2159,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=WAN-2.2-I2V-Double-B%20job%20-v1&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -2190,7 +2190,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "examples": [
         {
           "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/693097eb-99b2-4e43-8de0-40cb765a7639/original=true/96533576.mp4",
@@ -2259,7 +2259,7 @@
         "i2v_2_2",
         "t2v_2_2"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=WAN-2.2-I2V-HandjobB%20jobCombo%20-v1&nsfw=1",
       "releasedAt": "2025-12-04T13:37:39.000Z"
     },
@@ -3191,7 +3191,7 @@
         "minimax_h3_fl2va_pruned_veda",
         "minimax_h3_ref2va_pruned_veda"
       ],
-      "defaultSelected": true,
+      "defaultSelected": false,
       "civitaiSearch": "https://civitai.red/models?query=MysticXXX_MMH3-V2&nsfw=1",
       "releasedAt": "2026-08-21T09:01:29.000Z"
     },
@@ -3732,7 +3732,7 @@
       "wan2gpIds": [
         "ltx2_22B"
       ],
-      "defaultSelected": false,
+      "defaultSelected": true,
       "civitaiSearch": "https://civitai.red/models?query=DR34ML4Y_LT3X_V3&nsfw=1",
       "releasedAt": "2026-05-08T06:28:53.000Z"
     },
@@ -4661,7 +4661,7 @@
       "licenseNote": "",
       "source": "hf",
       "prefetchDefault": false,
-      "defaultSelected": true,
+      "defaultSelected": false,
       "bytesLow": 0,
       "sha256Low": null,
       "civitaiSearch": "https://civitai.red/models?query=nsfw_wan_14b_e15_q4_k&nsfw=1",
@@ -5379,7 +5379,7 @@
       "licenseNote": "",
       "source": "hf",
       "prefetchDefault": false,
-      "defaultSelected": false,
+      "defaultSelected": true,
       "bytesLow": 0,
       "sha256Low": null,
       "civitaiSearch": "https://civitai.red/models?query=Lusty_Krea-2_NSFW-Q4_K_M&nsfw=1",
@@ -5455,7 +5455,7 @@
       "licenseNote": "",
       "source": "hf",
       "prefetchDefault": false,
-      "defaultSelected": false,
+      "defaultSelected": true,
       "bytesLow": 0,
       "sha256Low": null,
       "civitaiSearch": "https://civitai.red/models?query=krea2TurboNSFWAIO_v10&nsfw=1",
@@ -5501,6 +5501,86 @@
       "sha256Low": null,
       "civitaiSearch": "https://civitai.red/models?query=10Eros_Max_h3_TURBO-hybrid_beta3&nsfw=1",
       "releasedAt": "2026-08-04T03:15:02.000Z"
+    },
+    {
+      "id": "wan_dasiwa_tastysin_v8",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "name": "DaSiWa Wan 2.2 I2V — TastySin v8 (Q8 HIGH+LOW)",
+      "precisionToken": "gguf_q8",
+      "quant": "Q8_0",
+      "description": "DaSiWa's flagship Wan 2.2 I2V adult checkpoint with the Q8 HIGH+LOW pair. Current top-tier Wan 2.2 realism, anatomy and motion; 1.4k likes and ~20k downloads for the Q8 HIGH file on CivitAI.",
+      "urls": [
+        "https://civitai.com/api/download/models/2466604?fileId=2355406#/DasiwaWAN22I2V14BTastysinV8_q8High.gguf"
+      ],
+      "urls2": [
+        "https://civitai.com/api/download/models/2466822?fileId=2355529#/DasiwaWAN22I2V14BTastysinV8_q8Low.gguf"
+      ],
+      "bytes": 15406619136,
+      "sha256": "5ff00d11264ae130503cf1954f89cedbf00a1db628f3524120bc966943152172",
+      "bytesLow": 15406619136,
+      "sha256Low": "dd743594590e61f619bba3e80f7a6c44dba20dfaa8e123047de2b21495b8ecdd",
+      "file": "DasiwaWAN22I2V14BTastysinV8_q8High.gguf",
+      "repo": "civitai.com/models/2190659",
+      "repoSha": "",
+      "preview": null,
+      "version": "Q8 HIGH+LOW",
+      "sourceUpdatedAt": "2025-12-16T20:09:14.458Z",
+      "filePage": "https://civitai.com/models/2190659?modelVersionId=2466604",
+      "repoPage": "https://civitai.com/models/2190659",
+      "recommended": null,
+      "preloadLoras": [],
+      "loraMultipliers": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "license": "civitai",
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "source": "civitai",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "civitaiSearch": "https://civitai.red/models/2190659",
+      "releasedAt": "2025-12-16T20:09:14.458Z"
+    },
+    {
+      "id": "wan_enhanced_nsfw_svi",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "name": "WAN 2.2 Enhanced NSFW — SVI FAST MOVE V2 (Q8 HIGH+LOW)",
+      "precisionToken": "gguf_q8",
+      "quant": "Q8_0",
+      "description": "The most-downloaded Wan 2.2 NSFW checkpoint on CivitAI (54k+ downloads for the Q8 HIGH file). Strong prompt adherence and fast camera motion; Q8 HIGH+LOW pair.",
+      "urls": [
+        "https://civitai.com/api/download/models/2540892?fileId=2429064#/wan22EnhancedNSFWSVICamera_nsfwFASTMOVEV2Q8H.gguf"
+      ],
+      "urls2": [
+        "https://civitai.com/api/download/models/2540896?fileId=2429066#/wan22EnhancedNSFWSVICamera_nsfwFASTMOVEV2Q8L.gguf"
+      ],
+      "bytes": 15406619136,
+      "sha256": "deb6dcf39fefef7850d1dd49a52b70a64c65b8d8e7b5f03bc1b6a541cf58aae9",
+      "bytesLow": 15406619136,
+      "sha256Low": "b5722e8e01a21f89a1c0b5e9de9a3b907ce92324d1951d5ce70307956790daae",
+      "file": "wan22EnhancedNSFWSVICamera_nsfwFASTMOVEV2Q8H.gguf",
+      "repo": "civitai.com/models/2053259",
+      "repoSha": "",
+      "preview": null,
+      "version": "FAST MOVE V2 Q8 HIGH+LOW",
+      "sourceUpdatedAt": "2025-12-27T16:53:01.412Z",
+      "filePage": "https://civitai.com/models/2053259?modelVersionId=2540892",
+      "repoPage": "https://civitai.com/models/2053259",
+      "recommended": null,
+      "preloadLoras": [],
+      "loraMultipliers": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "license": "civitai",
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "source": "civitai",
+      "prefetchDefault": false,
+      "defaultSelected": false,
+      "civitaiSearch": "https://civitai.red/models/2053259",
+      "releasedAt": "2025-12-27T16:53:01.412Z"
     }
   ],
   "civitai": [
@@ -5607,6 +5687,195 @@
       "licenseNote": "Civitai checkpoint — fetched with your own token, never re-hosted.",
       "prefetchDefault": false,
       "defaultSelected": false
+    },
+    {
+      "id": "civ_wan_mysticxxx_i2v-high",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "kind": "lora",
+      "name": "MysticXXX (MystiXX) — Wan 2.2 I2V HIGH",
+      "query": "Mystic XXX",
+      "baseModelFilter": "Wan Video 2.2 I2V",
+      "civitaiModelId": 1295758,
+      "civitaiVersionId": 2300332,
+      "bytesEstimate": 306807976,
+      "description": "MystiXX's Wan 2.2 I2V high-noise LoRA; 25.9k downloads. Pairs with the low-noise file. Best all-purpose MystiXX Wan 2.2 release at this moment.",
+      "recommended": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "",
+      "group": "wan",
+      "pair": "high",
+      "pairId": "civ_wan_mysticxxx_i2v"
+    },
+    {
+      "id": "civ_wan_mysticxxx_i2v-low",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "kind": "lora",
+      "name": "MysticXXX (MystiXX) — Wan 2.2 I2V LOW",
+      "query": "Mystic XXX",
+      "baseModelFilter": "Wan Video 2.2 I2V",
+      "civitaiModelId": 1295758,
+      "civitaiVersionId": 2300349,
+      "bytesEstimate": 306807976,
+      "description": "MystiXX's Wan 2.2 I2V low-noise LoRA; 15.9k downloads. Use together with the high-noise file.",
+      "recommended": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "",
+      "group": "wan",
+      "pair": "low",
+      "pairId": "civ_wan_mysticxxx_i2v"
+    },
+    {
+      "id": "civ_h3_mysticxxx_v5",
+      "family": "h3",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "kind": "lora",
+      "name": "MysticXXX (MystiXX) — MiniMax H3 v5 (FL2VA + REF2VA)",
+      "query": "Mystic XXX",
+      "baseModelFilter": "MiniMax H3",
+      "civitaiModelId": 2856467,
+      "civitaiVersionId": 3416478,
+      "bytesEstimate": 437272256,
+      "description": "Latest MysticXXX H3 release (v5.0, 2026-10-19): one REF2VA and one FL2VA LoRA in a single version. Successor to the 63k-download v4.",
+      "recommended": null,
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "",
+      "group": "h3"
+    },
+    {
+      "id": "civ_krea_mysticxxx_v3",
+      "family": "image",
+      "architecture": "krea2_turbo",
+      "kind": "lora",
+      "name": "MysticXXX (MystiXX) — Krea 2 v3",
+      "query": "Mystic XXX",
+      "baseModelFilter": "Krea 2",
+      "civitaiModelId": 2728644,
+      "civitaiVersionId": 3116175,
+      "bytesEstimate": 228587304,
+      "description": "MystiXX's Krea 2 NSFW LoRA v3 (34.5k downloads), matching the style of the Wan/H3 releases.",
+      "recommended": null,
+      "wan2gpIds": [
+        "krea2_turbo"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "",
+      "group": "image"
+    },
+    {
+      "id": "civ_wan_pov_missionary-high",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "kind": "lora",
+      "name": "POV Missionary — Wan 2.2 I2V HIGH",
+      "query": "POV Missionary",
+      "baseModelFilter": "Wan Video 2.2 I2V",
+      "civitaiModelId": 1331682,
+      "civitaiVersionId": 2098405,
+      "bytesEstimate": 306807976,
+      "description": "Most-downloaded Wan 2.2 act LoRA (86.7k high / 68k low). Strong POV framing and stable anatomy.",
+      "recommended": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "pov missionary",
+      "group": "wan",
+      "pair": "high",
+      "pairId": "civ_wan_pov_missionary"
+    },
+    {
+      "id": "civ_wan_pov_missionary-low",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "kind": "lora",
+      "name": "POV Missionary — Wan 2.2 I2V LOW",
+      "query": "POV Missionary",
+      "baseModelFilter": "Wan Video 2.2 I2V",
+      "civitaiModelId": 1331682,
+      "civitaiVersionId": 2098396,
+      "bytesEstimate": 306807976,
+      "description": "Low-noise half of the top Wan 2.2 POV Missionary LoRA pair.",
+      "recommended": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "pov missionary",
+      "group": "wan",
+      "pair": "low",
+      "pairId": "civ_wan_pov_missionary"
+    },
+    {
+      "id": "civ_wan_ultimatedt-high",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "kind": "lora",
+      "name": "Ultimate DeepThroat — Wan 2.2 I2V HIGH (K3NK)",
+      "query": "Ultimate DeepThroat",
+      "baseModelFilter": "Wan Video 2.2 I2V",
+      "civitaiModelId": 1874811,
+      "civitaiVersionId": 2325788,
+      "bytesEstimate": 306807976,
+      "description": "K3NK's top-rated deepthroat LoRA (47.4k downloads for the high-noise file).",
+      "recommended": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "deepthroat",
+      "group": "wan",
+      "pair": "high",
+      "pairId": "civ_wan_ultimatedt"
+    },
+    {
+      "id": "civ_wan_ultimatedt-low",
+      "family": "wan",
+      "architecture": "i2v_2_2",
+      "kind": "lora",
+      "name": "Ultimate DeepThroat — Wan 2.2 I2V LOW (K3NK)",
+      "query": "Ultimate DeepThroat",
+      "baseModelFilter": "Wan Video 2.2 I2V",
+      "civitaiModelId": 1874811,
+      "civitaiVersionId": 2191446,
+      "bytesEstimate": 306807976,
+      "description": "Low-noise half of K3NK's Ultimate DeepThroat pair (45.5k downloads).",
+      "recommended": null,
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "licenseNote": "Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+      "prefetchDefault": false,
+      "defaultSelected": true,
+      "trigger": "deepthroat",
+      "group": "wan",
+      "pair": "low",
+      "pairId": "civ_wan_ultimatedt"
     }
   ]
 }

@@ -175,8 +175,17 @@ def _basename(path: str) -> str:
 
 
 def url_file_name(url: str) -> str:
-    """The name a download will be saved under, without query/fragment."""
+    """The name a download will be saved under, without query/fragment.
+
+    A ``#/name.ext`` fragment is an explicit filename override: Wan2GP's
+    ``files_locator`` takes the basename of the whole URL, and fragments are
+    never sent to the server. CivitAI recipes use it because their download
+    URLs end in a numeric version id, not a filename.
+    """
     raw = str(url or "").split("|", 1)[0]
+    _, marker, override = raw.partition("#/")
+    if marker and _basename(override):
+        return _basename(override)
     parsed = urlsplit(raw)
     name = _basename(parsed.path or raw)
     return name

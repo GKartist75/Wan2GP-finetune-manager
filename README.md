@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.7.5 🧪
+# Wan2GP Finetune Manager Plugin v3.7.6 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.7.5** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v3.7.6** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
 
 ## Security and trust — verify every URL yourself
 
@@ -50,7 +50,7 @@ Always check yourself.**
 | **Browse** | Refresh registry, search by name/description/author/ID, filter by **model family**, architecture or tag, cards grouped under family headings, click cards for JSON details, validate URLs, download locally, improve/create variant |
 | **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. Architecture choices come from the running Wan2GP host and are labelled by family. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
 | **Local** | Visual card browser grouped by family, search and family/architecture filters, load & switch, delete, export, import .json with preview, upload to registry |
-| **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, pick a version from the result dropdown, then fill its URL (routes to LoRA or main checkpoint automatically) |
+| **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, pick a version from the result dropdown, then **Fill Selected** into Create/Edit, **Download selected** into the folder Wan2GP scans, or **Create finetune.json** so Wan2GP downloads and files the weights itself |
 | **Pack** | Optional curated adult pack catalog: 18+ gate plus six sub-tabs. **Catalog** (one row per item with its live state; download/recipe/gallery/delete for just that item), **Find & Add** (search or browse HuggingFace and CivitAI, inspect files, add one as a LoRA or checkpoint, or add by link), **LoRAs**, **Checkpoints and recipes**, **CivitAI** (release selection and downloads), **Updates** (offline compare, live online check, apply pins, download the pinned bytes). Off by default. |
 
 ## Pack recipes and assets
@@ -61,6 +61,10 @@ Wan2GP itself will use:
 
 - `|subfolder` and `|%lora_dir` suffixes are parsed as install instructions, not
   as part of the URL. Traversal outside the model/LoRA roots is rejected.
+- CivitAI download URLs end in a numeric version id, so the CivitAI tab appends
+  a `#/filename.ext` fragment. Fragments are never sent to the server, but
+  Wan2GP's `files_locator` takes the basename of the whole URL, so the file
+  lands as `name.gguf` / `name.safetensors` instead of `2466604`.
 - LoRAs default to the architecture's LoRA collection; `|%lora_dir` pins that
   explicitly. Checkpoints, text encoders, VAEs, preloads, second-phase URLs and
   optional assets are all inventoried.
@@ -149,7 +153,7 @@ Mature files are behind a login on both hosts, so an anonymous download of one f
 {"civitai_api_key": "your_civitai_api_key"}
 ```
 
-The key is sent as an `Authorization: Bearer` header for searches, and appended as `?token=…` to the download URLs the plugin fills in (Wan2GP's downloader fetches the URL itself and cannot send headers, which is why the query form — the one CivitAI documents for download tools — is used there). The key is never attached to any non-CivitAI host.
+The key is sent as an `Authorization: Bearer` header for searches and for **Download selected**; the downloader also adds `?token=…` when a CivitAI request needs it. Filled URLs and `finetune.json` recipes never contain the key, so they stay shareable. Gated files must therefore be fetched with **Download selected**; Wan2GP's own downloader has no token for them. The key is never attached to any non-CivitAI host.
 
 See [`config.example.json`](./config.example.json).
 
@@ -179,7 +183,7 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # Plugin entry point and UI logic
-├── plugin_info.json     # Plugin metadata v3.7.5
+├── plugin_info.json     # Plugin metadata v3.7.6
 ├── fm_security.py       # URL policy, safe fetching, size limits
 ├── fm_assets.py         # Pack recipe/asset resolution
 ├── fm_pack.py           # Pack catalog, downloads, updates
@@ -216,6 +220,14 @@ Remove-Item -Recurse -Force .\__pycache__
 ```
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v3.7.6
+
+- **CivitAI tab actions** — pick a version, then **Fill Selected** into Create/Edit, **Download selected** into the folder Wan2GP scans (`ckpts/` for checkpoints, `loras/<architecture>/` for LoRAs), or **Create finetune.json** for a recipe that downloads later. Create uses real filenames, not CivitAI's numeric version id.
+- **Fill Selected fixed** — the button now returns updates for every editor field and reports a visible message when no version or no weight URL is available, instead of silently doing nothing.
+- **Pack buttons fixed** — Pack **Download selected**, **Create recipes**, delete and Catalog actions raised `NameError: self` after doing their work; they now refresh Wan2GP through the correct host reference.
+- **Dynamic dropdowns** — Catalog family, Find architecture/link architecture, and Pack selection dropdowns accept values added after the tab was built, so refreshing a catalog no longer rejects a valid selection.
+- **Tests** — cover filename-preserving recipes, `#/filename` inventory resolution, and the existing pack/CivitAI helpers.
 
 ## What's New in v3.7.5
 

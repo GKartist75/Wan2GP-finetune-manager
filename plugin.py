@@ -225,7 +225,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.7.5"
+PLUGIN_VERSION = "3.7.6"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -1839,25 +1839,6 @@ def _civitai_api_headers() -> dict:
     return headers
 
 
-def _civitai_with_token(url: str) -> str:
-    """Attach the configured CivitAI API key to a download URL. Wan2GP fetches the
-    URL itself and cannot send an Authorization header, so the query-parameter form
-    (documented by CivitAI for download tools) is the only option here. The key is
-    only ever attached to CivitAI hosts."""
-    if not CIVITAI_API_KEY or not url:
-        return url
-    parts = urllib.parse.urlsplit(url)
-    if parts.hostname not in CIVITAI_SITES:
-        return url
-    if "token" in urllib.parse.parse_qs(parts.query):
-        return url
-    query = parts.query + "&" if parts.query else ""
-    query += "token=" + urllib.parse.quote(CIVITAI_API_KEY, safe="")
-    return urllib.parse.urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, query, parts.fragment)
-    )
-
-
 CIVITAI_SITE_DEFAULT = _civitai_site(CIVITAI_SITE_DEFAULT)
 
 
@@ -2168,53 +2149,167 @@ def _civitai_result_options(data: dict, site: str = "civitai.com") -> list[tuple
     return options
 
 
-def _civitai_extract_fill_data(civitai_json_str: str) -> tuple:
-    """Extract download URL from a CivitAI model/version selection.
-    Only fills the URL field (main checkpoints or loras depending on type).
-    All other fields are left unchanged via gr.update().
-    Returns a tuple matching the ALL_INPUTS order (minus the ID at index 0),
-    plus a status message.
+def _civitai_selection(civitai_json_str) -> dict | None:
+    """Parse the JSON payload stored in the CivitAI result dropdown.
+
+    Returns ``{"model", "version", "site"}`` or ``None`` when nothing valid is
+    selected. Every action (fill, download, recipe) shares this validation so
+    a stale or empty dropdown value produces a clear message.
     """
     if not civitai_json_str or civitai_json_str == "{}":
-        return tuple([gr.update()] * 33 + [""])
-
-    try:
-        sel = json.loads(civitai_json_str)
-    except (json.JSONDecodeError, TypeError):
-        return tuple([gr.update()] * 33 + [""])
-
-    model = sel.get("model", {})
-    version = sel.get("version", {})
-    site = _civitai_site(sel.get("site") or CIVITAI_SITE_DEFAULT)
-    model_name = model.get("name", "?") or "?"
-
-    files = version.get("files", [])
-    primary = next(
-        (f for f in files if f.get("primary", False)), files[0] if files else None
-    )
-    dl_url = (
-        primary.get("downloadUrl", version.get("downloadUrl", ""))
-        if primary
-        else version.get("downloadUrl", "")
-    )
-    if not dl_url:
-        dl_url = _civitai_download_url(site, version.get("id", ""))
-    dl_url = _civitai_with_token(dl_url)
-    keyed = " (API key attached)" if CIVITAI_API_KEY and "token=" in dl_url else ""
-
-    mtype = model.get("type", "").upper()
-    # Put URL in main checkpoints for non-LoRA, loras field for LoRA
-    if mtype in ("LORA", "LOCON", "DORA"):
-        # URL goes to loras field (index 12 in return tuple = ALL_INPUTS[13])
-        result = [gr.update()] * 33
-        result[12] = gr.update(value=dl_url)
-        status = f"LoRA URL from {model_name}{keyed}"
+        return None
+    if isinstance(civitai_json_str, dict):
+        data = civitai_json_str
     else:
-        # URL goes to main checkpoints field (index 4 in return tuple = ALL_INPUTS[5])
-        result = [gr.update()] * 33
-        result[4] = gr.update(value=dl_url)
-        status = f"Download URL from {model_name}{keyed}"
+        try:
+            data = json.loads(civitai_json_str)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(data, dict):
+        return None
+    model = data.get("model")
+    version = data.get("version")
+    if not isinstance(model, dict) or not isinstance(version, dict):
+        return None
+    if not version.get("files") and not version.get("downloadUrl"):
+        return None
+    return {
+        "model": model,
+        "version": version,
+        "site": _civitai_site(data.get("site") or CIVITAI_SITE_DEFAULT),
+    }
 
+
+def _civitai_selection_name(sel: dict) -> str:
+    model = sel.get("model") or {}
+    version = sel.get("version") or {}
+    name = str(model.get("name") or "CivitAI model").strip()
+    vname = str(version.get("name") or "").strip()
+    return f"{name} \u2014 {vname}" if vname else name
+
+
+def _civitai_recipe_id(sel: dict) -> str:
+    model = sel.get("model") or {}
+    version = sel.get("version") or {}
+    return _sanitize_fin_id(
+        f"civitai_{model.get('id') or 'model'}_{version.get('id') or 'version'}"
+    )
+
+
+def _state_model_type(state_value) -> str:
+    """Best-effort read of the current Wan2GP model type from the host state."""
+    if isinstance(state_value, str):
+        try:
+            state_value = json.loads(state_value)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+    if not isinstance(state_value, dict):
+        return ""
+    for key in ("model_type", "architecture"):
+        value = state_value.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    nested = state_value.get("settings")
+    if isinstance(nested, dict):
+        for key in ("model_type", "architecture"):
+            value = nested.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    model = state_value.get("model")
+    if isinstance(model, dict):
+        value = model.get("architecture")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _civitai_none_fill(message: str) -> tuple:
+    return tuple([gr.update()] * 33 + [message])
+
+
+def _civitai_extract_fill_data(
+    civitai_json_str,
+    arch="",
+    current_name="",
+    current_desc="",
+    current_tags="",
+    current_loras="",
+    current_loras_multipliers="",
+) -> tuple:
+    """Fill Create/Edit from a CivitAI result selection.
+
+    Returns updates matching ``ALL_INPUTS[1:]`` plus a status message. The
+    result dropdown stores the full model/version JSON, so no other field
+    changes unless the user has left it empty. A missing selection returns a
+    visible message instead of silently doing nothing.
+    """
+    sel = _civitai_selection(civitai_json_str)
+    if sel is None:
+        return _civitai_none_fill(
+            "Select a result version first, then press *Fill Selected*."
+        )
+    model = sel["model"]
+    version = sel["version"]
+    site = sel["site"]
+    kind = fm_pack.civitai_kind(model.get("type"))
+    if kind is None:
+        return _civitai_none_fill(
+            f"CivitAI type '{model.get('type') or 'unknown'}' is not a "
+            "checkpoint or LoRA, so there is no weight URL to fill."
+        )
+    files = fm_pack.civitai_weight_files(
+        version.get("files") or [], primary_only=True
+    )
+    if not files:
+        return _civitai_none_fill("This release has no downloadable weight file.")
+    url = fm_pack.civitai_recipe_url(files[0], site)
+    name = _civitai_selection_name(sel)
+
+    result = [gr.update()] * 33
+    if not str(current_name or "").strip():
+        result[0] = gr.update(value=name)
+    if arch:
+        result[1] = gr.update(value=str(arch))
+    if not str(current_desc or "").strip():
+        desc = fm_pack.civitai_plain_text(model.get("description"))
+        if desc:
+            result[2] = gr.update(value=desc)
+    if not str(current_tags or "").strip():
+        tags = [
+            str(tag).strip()
+            for tag in (model.get("tags") or [])
+            if isinstance(tag, str) and str(tag).strip()
+        ]
+        if tags:
+            result[31] = gr.update(value=", ".join(tags))
+
+    if kind == "lora":
+        existing = [
+            line.strip()
+            for line in str(current_loras or "").splitlines()
+            if line.strip()
+        ]
+        base_url = url.split("#", 1)[0]
+        if any(line.split("#", 1)[0] == base_url for line in existing):
+            status = f"'{name}' is already in the LoRA list."
+        elif len(existing) >= 10:
+            status = "The LoRA list is full (10 max); remove one first."
+        else:
+            existing.append(url)
+            mults = str(current_loras_multipliers or "").split()
+            mults += ["1"] * (len(existing) - len(mults))
+            result[12] = gr.update(value="\n".join(existing))
+            result[13] = gr.update(value=" ".join(mults[: len(existing)]))
+            status = (
+                f"Added LoRA URL from {name} ({len(existing)}/10). "
+                "Open **Create / Edit \u2192 LoRAs** to review it."
+            )
+    else:
+        result[4] = gr.update(value=url)
+        status = (
+            f"Set the main checkpoint URL from {name}. "
+            "Open **Create / Edit \u2192 URLs** to review it."
+        )
     return tuple(result + [status])
 
 
@@ -3068,6 +3163,7 @@ def _build_pack_tab(plugin) -> None:
                             }
                         ),
                         value="all",
+                        allow_custom_value=True,
                         scale=1,
                     )
                     cat_show = gr.Dropdown(
@@ -3085,7 +3181,9 @@ def _build_pack_tab(plugin) -> None:
                     interactive=False,
                     wrap=True,
                 )
-                cat_pick = gr.Dropdown(label="Item", choices=[], filterable=True)
+                cat_pick = gr.Dropdown(
+                    label="Item", choices=[], filterable=True, allow_custom_value=True
+                )
                 with gr.Row():
                     cat_download = gr.Button("Download this", variant="primary")
                     cat_recipe = gr.Button("Write recipe")
@@ -3144,16 +3242,22 @@ def _build_pack_tab(plugin) -> None:
                     interactive=False,
                     wrap=True,
                 )
-                find_pick = gr.Dropdown(label="Result", choices=[], filterable=True)
+                find_pick = gr.Dropdown(
+                    label="Result", choices=[], filterable=True, allow_custom_value=True
+                )
                 with gr.Row():
                     find_inspect = gr.Button("Inspect")
                     find_version = gr.Dropdown(
-                        label="CivitAI version", choices=[], scale=2
+                        label="CivitAI version",
+                        choices=[],
+                        allow_custom_value=True,
+                        scale=2,
                     )
                     find_arch = gr.Dropdown(
                         label="Wan2GP architecture",
                         choices=_pack_arch_choices(),
                         filterable=True,
+                        allow_custom_value=True,
                         scale=2,
                     )
                 find_files = gr.Dataframe(
@@ -3162,7 +3266,9 @@ def _build_pack_tab(plugin) -> None:
                     interactive=False,
                     wrap=True,
                 )
-                find_file_pick = gr.Dropdown(label="File", choices=[], filterable=True)
+                find_file_pick = gr.Dropdown(
+                    label="File", choices=[], filterable=True, allow_custom_value=True
+                )
                 with gr.Row():
                     find_kind_override = gr.Dropdown(
                         label="Add as",
@@ -3184,6 +3290,7 @@ def _build_pack_tab(plugin) -> None:
                             label="Wan2GP architecture",
                             choices=_pack_arch_choices(),
                             filterable=True,
+                            allow_custom_value=True,
                             scale=2,
                         )
                     find_url_btn = gr.Button("Resolve and inspect")
@@ -3200,6 +3307,7 @@ def _build_pack_tab(plugin) -> None:
                     value=[x for x in lora_ids if x in {v for _, v in lora_choices}],
                     multiselect=True,
                     filterable=True,
+                    allow_custom_value=True,
                 )
                 with gr.Row():
                     pack_inv_btn = gr.Button("Refresh LoRA inventory")
@@ -3217,6 +3325,7 @@ def _build_pack_tab(plugin) -> None:
                     value=[x for x in ft_ids if x in {v for _, v in fin_choices}],
                     multiselect=True,
                     filterable=True,
+                    allow_custom_value=True,
                 )
                 pack_details = gr.Markdown(
                     _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog())
@@ -3246,6 +3355,7 @@ def _build_pack_tab(plugin) -> None:
                         value=[x for x in civ_ids if x in {v for _, v in civ_choices}],
                         multiselect=True,
                         filterable=True,
+                        allow_custom_value=True,
                     )
                     pack_civ_download = gr.Button(
                         "Download CivitAI selected", variant="primary"
@@ -3268,6 +3378,7 @@ def _build_pack_tab(plugin) -> None:
                     choices=[],
                     multiselect=True,
                     filterable=True,
+                    allow_custom_value=True,
                 )
                 pack_update = gr.Markdown("")
         pack_log = gr.Textbox(label="Pack log", lines=10, interactive=False)
@@ -3445,7 +3556,7 @@ def _build_pack_tab(plugin) -> None:
                 except Exception as exc:
                     log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
             fm_pack.save_state(state, _pack_state_path)
-            _refresh_model_defs(self)
+            _refresh_model_defs(plugin)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3474,7 +3585,7 @@ def _build_pack_tab(plugin) -> None:
                     log.append(f"[OK] wrote {p}")
                 except Exception as exc:
                     log.append(f"[FAIL] {entry.get('name')}: {exc}")
-            _refresh_model_defs(self)
+            _refresh_model_defs(plugin)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3523,7 +3634,7 @@ def _build_pack_tab(plugin) -> None:
                 except Exception as exc:
                     log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
             fm_pack.save_state(state, _pack_state_path)
-            _refresh_model_defs(self)
+            _refresh_model_defs(plugin)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3594,7 +3705,7 @@ def _build_pack_tab(plugin) -> None:
                     )
                 except Exception as exc:
                     log.append(f"[FAIL] {entry.get('name')}: {exc}")
-            _refresh_model_defs(self)
+            _refresh_model_defs(plugin)
             return (
                 "\n".join(log) or "Nothing selected.",
                 _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
@@ -3878,7 +3989,7 @@ def _build_pack_tab(plugin) -> None:
             try:
                 msg = _fetch_one(row, progress)
                 fm_pack.save_state(state, _pack_state_path)
-                _refresh_model_defs(self)
+                _refresh_model_defs(plugin)
             except Exception as exc:
                 msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
             return (
@@ -3904,7 +4015,7 @@ def _build_pack_tab(plugin) -> None:
                 )
             try:
                 p = fm_pack.write_recipe(row["entry"], finetunes_dir)
-                _refresh_model_defs(self)
+                _refresh_model_defs(plugin)
                 msg = f"[OK] wrote {p}"
             except Exception as exc:
                 msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
@@ -3937,7 +4048,7 @@ def _build_pack_tab(plugin) -> None:
                     fm_pack.drop_custom(row["id"])
                     done = True
                 fm_pack.save_state(state, _pack_state_path)
-                _refresh_model_defs(self)
+                _refresh_model_defs(plugin)
                 msg = (
                     f"[OK] {entry.get('name')}: deleted"
                     if done
@@ -4386,6 +4497,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         choices=[("All families", "All")],
                         value="All",
                         filterable=True,
+                        allow_custom_value=True,
                         scale=1,
                     )
                     b_arch = gr.Dropdown(
@@ -5681,6 +5793,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         if hasattr(self, "load_settings_from_file") and settings_path.exists()
                         else (gr.update(), gr.update(), None)
                     )
+                    target = _ensure_model_choice_target(target, safe_id)
                     return f"Created {safe_id}", target, gr.update()
 
                 fin_create.click(
@@ -6094,6 +6207,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         choices=[("All families", "All")],
                         value="All",
                         filterable=True,
+                        allow_custom_value=True,
                         scale=1,
                     )
                     l_arch = gr.Dropdown(
@@ -6130,7 +6244,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
             # ── CIVITAI ──
             with gr.TabItem("CivitAI", id="civitai") as ci_tab:
                 gr.Markdown(
-                    "Search CivitAI for models and auto-fill into Create/Edit. "
+                    "Search CivitAI, then **fill Create/Edit**, **download** the "
+                    "weights into the folder Wan2GP scans, or **create a "
+                    "finetune.json** recipe that downloads them later. "
                     "**Site** picks the host: `civitai.com` or its adult front-end "
                     "`civitai.red` (same catalogue; mature models need *Include NSFW* "
                     "on either one)."
@@ -6146,6 +6262,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         label="Type",
                         choices=_civitai_enum_choices("ModelType"),
                         value="All",
+                        allow_custom_value=True,
                         scale=1,
                     )
                     ci_base = gr.Dropdown(
@@ -6153,6 +6270,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         choices=_civitai_enum_choices("BaseModel"),
                         filterable=True,
                         value="All",
+                        allow_custom_value=True,
                         scale=1,
                     )
                     ci_site = gr.Dropdown(
@@ -6175,6 +6293,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         choices=[],
                         value=None,
                         interactive=True,
+                        allow_custom_value=True,
                         scale=3,
                         container=False,
                     )
@@ -6182,11 +6301,59 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         "Fill Selected into Create/Edit", variant="primary", scale=1
                     )
                     ci_clear_btn = gr.Button("Clear", scale=1)
+                with gr.Row():
+                    ci_arch = gr.Dropdown(
+                        label="Target architecture (LoRA folder / recipe model)",
+                        choices=_architecture_choices(self),
+                        filterable=True,
+                        allow_custom_value=True,
+                        scale=3,
+                    )
+                    ci_all_files = gr.Checkbox(
+                        label="All weight files",
+                        value=False,
+                        scale=1,
+                        min_width=140,
+                    )
+                    ci_download_btn = gr.Button(
+                        "Download selected", variant="primary", scale=1
+                    )
+                    ci_recipe_btn = gr.Button("Create finetune.json", scale=1)
                 ci_status = gr.Markdown("Enter a search term to find models on CivitAI")
+                ci_action_status = gr.Markdown("")
                 ci_results = gr.HTML(
                     "<div style='color:#9ca3af;text-align:center;"
                     "padding:32px'>Click Search</div>"
                 )
+
+                def _ci_target_arch(arch, state_value):
+                    """Resolve the target architecture: explicit choice, then the
+                    current Wan2GP model, then Wan2GP's first installed model."""
+                    value = str(arch or "").strip() or _state_model_type(state_value)
+                    if value:
+                        return value
+                    choices = _architecture_choices(self)
+                    return str(choices[0][1]) if choices else ""
+
+                def _ci_hint(exc) -> str:
+                    text = str(exc).lower()
+                    if any(
+                        marker in text
+                        for marker in (
+                            "text/html",
+                            "401",
+                            "403",
+                            "unauthorized",
+                            "forbidden",
+                            "login",
+                        )
+                    ):
+                        return (
+                            "\n\nCivitAI gates this file. Add `civitai_api_key` to "
+                            f"`{_cfg_path}` or download it manually from the site."
+                        )
+                    return ""
+
 
                 def _ci_refresh_filters(mtype, base):
                     """Upgrade the filters to CivitAI's live enum values when the tab is
@@ -6212,7 +6379,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "<div style='color:#9ca3af;"
                             "text-align:center;padding:32px'>"
                             "Enter a search term or pick a Type / Base Model</div>",
-                            "",
+                            "Enter a search term or pick a Type / Base Model",
                             gr.update(choices=[], value=None),
                         ) + tuple(enum_updates)
                     data = _civitai_search(
@@ -6248,13 +6415,37 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
                 )
 
-                def _ci_fill(civitai_json_str):
-                    return _civitai_extract_fill_data(civitai_json_str)
+                def _ci_fill(
+                    civitai_json_str,
+                    arch,
+                    current_name,
+                    current_desc,
+                    current_tags,
+                    current_loras,
+                    current_mults,
+                ):
+                    return _civitai_extract_fill_data(
+                        civitai_json_str,
+                        arch=arch,
+                        current_name=current_name,
+                        current_desc=current_desc,
+                        current_tags=current_tags,
+                        current_loras=current_loras,
+                        current_loras_multipliers=current_mults,
+                    )
 
                 ci_load_btn.click(
                     fn=_ci_fill,
-                    inputs=[ci_pick],
-                    outputs=ALL_INPUTS[1:] + [ci_status],
+                    inputs=[
+                        ci_pick,
+                        ci_arch,
+                        fin_name,
+                        fin_desc,
+                        fin_tags,
+                        fin_loras,
+                        fin_lmults,
+                    ],
+                    outputs=ALL_INPUTS[1:] + [ci_action_status],
                 ).then(
                     fn=_sync_refs_from_loaded,
                     inputs=_URL_INPUTS,
@@ -6268,16 +6459,153 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     + fin_lora_vals,
                 )
 
+                def _ci_download(
+                    state_value,
+                    civitai_json_str,
+                    arch,
+                    all_files,
+                    progress=gr.Progress(),
+                ):
+                    sel = _civitai_selection(civitai_json_str)
+                    if sel is None:
+                        return (
+                            "Select a result version first, then press "
+                            "*Download selected*.",
+                            gr.update(),
+                        )
+                    kind = fm_pack.civitai_kind(sel["model"].get("type"))
+                    if kind is None:
+                        return (
+                            f"CivitAI type "
+                            f"'{sel['model'].get('type') or 'unknown'}' is not a "
+                            "checkpoint or LoRA.",
+                            gr.update(),
+                        )
+                    arch_used = _ci_target_arch(arch, state_value)
+                    if kind == "lora" and not arch_used:
+                        return (
+                            "Choose a target architecture so the LoRA lands in "
+                            "the folder Wan2GP scans.",
+                            gr.update(),
+                        )
+                    dest = (
+                        _lora_dir_for(arch_used, self)
+                        if kind == "lora"
+                        else _ckpts_dir()
+                    )
+                    label = _civitai_selection_name(sel)
+                    try:
+                        result = fm_pack.install_civitai_version(
+                            sel["version"],
+                            dest,
+                            site=sel["site"],
+                            token=CIVITAI_API_KEY,
+                            primary_only=not bool(all_files),
+                            label=label,
+                            progress=lambda n, t, text: progress(
+                                (n, t or n), desc=text
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - shown in status
+                        return (
+                            f"**Download failed:** {exc}{_ci_hint(exc)}",
+                            gr.update(value=arch_used or None),
+                        )
+                    DISK_EXISTS_CACHE.clear()
+                    _refresh_model_defs(self)
+                    lines = []
+                    if result["files"]:
+                        lines.append(
+                            f"**Saved {len(result['files'])} file(s) to "
+                            f"`{result['dir']}`**"
+                        )
+                        lines.extend(f"- `{name}`" for name in result["files"])
+                    if result["errors"]:
+                        if lines:
+                            lines.append("")
+                        lines.append("**Failed:**")
+                        lines.extend(
+                            f"- {error}{_ci_hint(error)}"
+                            for error in result["errors"]
+                        )
+                    if not lines:
+                        lines.append("Nothing was downloaded.")
+                    return "\n".join(lines), gr.update(value=arch_used or None)
+
+                ci_download_btn.click(
+                    fn=_ci_download,
+                    inputs=[self.state, ci_pick, ci_arch, ci_all_files],
+                    outputs=[ci_action_status, ci_arch],
+                    show_progress="full",
+                )
+
+                def _ci_create_recipe(
+                    state_value, civitai_json_str, arch, all_files
+                ):
+                    sel = _civitai_selection(civitai_json_str)
+                    if sel is None:
+                        return (
+                            "Select a result version first, then press "
+                            "*Create finetune.json*.",
+                            gr.update(),
+                        )
+                    arch_used = _ci_target_arch(arch, state_value)
+                    if not arch_used:
+                        return (
+                            "Choose a target architecture for the recipe.",
+                            gr.update(),
+                        )
+                    try:
+                        data = fm_pack.civitai_recipe(
+                            sel["model"],
+                            sel["version"],
+                            architecture=arch_used,
+                            primary_only=not bool(all_files),
+                            site=sel["site"],
+                        )
+                    except Exception as exc:  # noqa: BLE001 - shown in status
+                        return (
+                            f"**Cannot create recipe:** {exc}",
+                            gr.update(value=arch_used or None),
+                        )
+                    safe_id = _unique_id(_civitai_recipe_id(sel))
+                    _write_finetune(safe_id, data)
+                    _refresh_model_defs(self)
+                    url_count = len(
+                        fm_pack.civitai_download_urls(
+                            sel["version"],
+                            site=sel["site"],
+                            primary_only=not bool(all_files),
+                        )
+                    )
+                    filename = Path(FINETUNES_DIR) / f"{safe_id}.json"
+                    return (
+                        f"**Created `{filename}`** with {url_count} download "
+                        "URL(s). Wan2GP fetches the weights when this finetune "
+                        "is loaded and saves each under its real filename. The "
+                        "recipe stores the public URL only; use *Download "
+                        "selected* to fetch gated files with your API key.",
+                        gr.update(value=arch_used),
+                    )
+
+                ci_recipe_btn.click(
+                    fn=_ci_create_recipe,
+                    inputs=[self.state, ci_pick, ci_arch, ci_all_files],
+                    outputs=[ci_action_status, ci_arch],
+                )
+
                 def _ci_clear():
                     return (
                         "<div style='color:#9ca3af;text-align:center;"
                         "padding:32px'>Click Search</div>",
                         gr.update(choices=[], value=None),
                         "Enter a search term to find models on CivitAI",
+                        "",
                     )
 
                 ci_clear_btn.click(
-                    fn=_ci_clear, outputs=[ci_results, ci_pick, ci_status]
+                    fn=_ci_clear,
+                    outputs=[ci_results, ci_pick, ci_status, ci_action_status],
                 )
 
             # ── SHARED LOCAL HANDLERS ──
