@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "sulphur_distil_fp8mixed.safetensors",
+    "architecture": "ltx2_22B",
+    "description": "Uncensored-by-design LTX 2.3 distilled model.",
+    "URLs": [
+      "https://huggingface.co/Civitai/Sulphur-2-distilled-fp8/resolve/main/sulphur_distil_fp8mixed.safetensors"
+    ],
+    "author": "Civitai",
+    "version": "2026-05-06",
+    "tags": [
+      "adult",
+      "ltx"
+    ]
+  }
+}

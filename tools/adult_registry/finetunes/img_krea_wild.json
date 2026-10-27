@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "Wild_Krea-2-turbo_NSFW-Q4_1.gguf",
+    "architecture": "krea2_turbo",
+    "description": "GGUF build of the Wild Krea 2 Turbo NSFW finetune (7.4k downloads).",
+    "URLs": [
+      "https://huggingface.co/ModdiAdam/Wild_Krea-2-turbo_NSFW/resolve/main/Wild_Krea-2-turbo_NSFW-Q4_1.gguf"
+    ],
+    "author": "ModdiAdam",
+    "version": "2026-08-21",
+    "tags": [
+      "adult",
+      "image"
+    ]
+  }
+}

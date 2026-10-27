@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "10Eros_Max_h3_TURBO-hybrid_beta3_int8_convrot.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "TenStrip 10Eros ported to MiniMax H3 \u2014 8-step turbo, reference deltas at full-block level, viggle deltas, fastv2 structured 8+4 step turbos. Multi-LoRA composition with strength cap (25+ LoRAs). \u2014 TenStrip HuggingFace repo \u2014 gated, requires account.",
+    "URLs": [
+      "https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_TURBO-hybrid_beta3_int8_convrot.safetensors"
+    ],
+    "author": "TenStrip",
+    "version": "beta3",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

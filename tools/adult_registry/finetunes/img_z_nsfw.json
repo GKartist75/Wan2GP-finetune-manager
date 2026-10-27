@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "z_image_nsfw_v2-Q8_0.gguf",
+    "architecture": "z_image",
+    "description": "",
+    "URLs": [
+      "https://huggingface.co/lesliemore/z-image-turbo-nsfw-v2-GGUF/resolve/main/z_image_nsfw_v2-Q8_0.gguf"
+    ],
+    "author": "lesliemore",
+    "version": "v2",
+    "tags": [
+      "adult",
+      "image"
+    ]
+  }
+}

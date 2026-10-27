@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "I2V/v2.1/High/wan22RemixT2VI2V_i2vHighV21-Q4_K_M.gguf",
+    "architecture": "i2v_2_2",
+    "description": "Community Remix v2.1 merge \u2014 shipped as a HIGH/LOW pair.",
+    "URLs": [
+      "https://huggingface.co/BigDannyPt/Wan-2.2-Remix-GGUF/resolve/main/I2V/v2.1/High/wan22RemixT2VI2V_i2vHighV21-Q4_K_M.gguf"
+    ],
+    "author": "BigDannyPt",
+    "version": "2026-03-30",
+    "tags": [
+      "adult",
+      "wan"
+    ]
+  }
+}

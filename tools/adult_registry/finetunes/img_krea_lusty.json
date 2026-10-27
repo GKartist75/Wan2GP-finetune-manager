@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "Lusty_Krea-2_NSFW-Q4_K_M.gguf",
+    "architecture": "krea2_turbo",
+    "description": "Second Krea 2 adult GGUF finetune (3.8k downloads).",
+    "URLs": [
+      "https://huggingface.co/ModdiAdam/Lusty_Krea-2_NSFW/resolve/main/Lusty_Krea-2_NSFW-Q4_K_M.gguf"
+    ],
+    "author": "ModdiAdam",
+    "version": "2026-10-07",
+    "tags": [
+      "adult",
+      "image"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "ref2va-beta-06/pinkcherrry_minimax_h3_ref2va_beta-0.6_int8_convrot.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Same release on the image-reference branch.",
+    "URLs": [
+      "https://huggingface.co/SexGod1979/PinkCherry-NSFW_MiniMax-H3/resolve/main/ref2va-beta-06/pinkcherrry_minimax_h3_ref2va_beta-0.6_int8_convrot.safetensors"
+    ],
+    "author": "SexGod1979",
+    "version": "beta.0.6",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

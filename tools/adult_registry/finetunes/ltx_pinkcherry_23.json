@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "v1.8/PinkCherry_FineTune_Q5_K_M_v18_LTX23.gguf",
+    "architecture": "ltx2_22B",
+    "description": "Long-running LTX 2.3 NSFW finetune (63k downloads), latest GGUF build.",
+    "URLs": [
+      "https://huggingface.co/SexGod1979/PinkCherry_NSFW_LTX23/resolve/main/v1.8/PinkCherry_FineTune_Q5_K_M_v18_LTX23.gguf"
+    ],
+    "author": "SexGod1979",
+    "version": "v18",
+    "tags": [
+      "adult",
+      "ltx"
+    ]
+  }
+}

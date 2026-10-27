@@ -225,27 +225,51 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "3.7.6"
+PLUGIN_VERSION = "4.0.0"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
+ADULT_REGISTRY_SPACE = "GKartist75/wan2gp-finetunes-adult"
 FINETUNES_DIR = "finetunes"
+
+# Registry sources: first = community/default upload target. Override with a
+# ``registry_spaces`` list in config.json (repo ids, ``owner/name``).
+_REGISTRY_SOURCES: list[str] = [REGISTRY_SPACE, ADULT_REGISTRY_SPACE]
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg_dir = _cfg_path.parent
-_pack_state_path = _cfg_dir / fm_pack.STATE_NAME
 
 REGISTRY_TOKEN = ""
 CIVITAI_NSFW_DEFAULT = False
 CIVITAI_API_KEY = ""
 CIVITAI_SITE_DEFAULT = "civitai.com"
+ADULT_CONSENT = False
+
+
+def _persist_config(key: str, value) -> None:
+    """Update one key in config.json, preserving all other keys."""
+    try:
+        cfg = {}
+        if _cfg_path.exists():
+            cfg = json.loads(_cfg_path.read_text(encoding="utf-8"))
+        cfg[key] = value
+        _cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
 if _cfg_path.exists():
     try:
         _cfg = json.loads(_cfg_path.read_text(encoding="utf-8"))
         REGISTRY_TOKEN = _cfg.get("registry_token", "")
+        _rs = _cfg.get("registry_spaces")
+        if isinstance(_rs, list):
+            _rs = [str(x).strip() for x in _rs if str(x).strip()]
+            if _rs:
+                _REGISTRY_SOURCES[:] = _rs
         CIVITAI_NSFW_DEFAULT = bool(_cfg.get("civitai_nsfw", False))
         CIVITAI_API_KEY = str(_cfg.get("civitai_api_key", "") or "")
         CIVITAI_SITE_DEFAULT = str(_cfg.get("civitai_site", "civitai.com") or "civitai.com")
+        ADULT_CONSENT = bool(_cfg.get("adult_consent", False))
     except Exception:
         pass
 _PLACEHOLDER_TOKENS = {"test_token_abc", "hf_YOUR_TOKEN_HERE"}
@@ -1977,6 +2001,7 @@ def _civitai_search(
     limit: int = 12,
     nsfw: bool = False,
     site: str = "civitai.com",
+    sort: str = "Most Downloaded",
 ) -> dict:
     """Search CivitAI models. Returns raw API response dict with 'items' key.
 
@@ -2001,7 +2026,10 @@ def _civitai_search(
 
     if not any(key in ("types", "baseModels") for key, _ in filters):
         try:
-            return _fetch(filters + [("query", query), ("limit", str(limit))])
+            base_params = filters + [("sort", sort), ("limit", str(limit))]
+            if query:
+                base_params.insert(len(filters), ("query", query))
+            return _fetch(base_params)
         except Exception as e:
             return {"error": str(e), "items": []}
 
@@ -2023,7 +2051,7 @@ def _civitai_search(
                 break
         return found
 
-    lookups = [lambda: _paged(filters + [("sort", "Most Downloaded"), ("limit", "100")], 2, _matches)]
+    lookups = [lambda: _paged(filters + [("sort", sort), ("limit", "100")], 2, _matches)]
     if query:
         lookups.insert(0, lambda: _paged(filters + [("query", query), ("limit", "100")], 3))
         lookups.insert(1, lambda: _paged(filters + [("tag", query.lower()), ("limit", "100")], 1))
@@ -2196,6 +2224,382 @@ def _civitai_recipe_id(sel: dict) -> str:
     )
 
 
+# ── Hugging Face search engine ─────────────────────────────────────────────
+# Same role as the CivitAI engine above: search, result cards, weight-file
+# selection, editor fill and finetune.json recipes. The HF Hub API returns a
+# plain list; the weight model is a models/{repo}?blobs=true call.
+
+_HF_API = "https://huggingface.co/api"
+# One set of labels drives both engines (ci_sort dropdown); the values map to
+# each API's sort parameter.
+_CIVITAI_SORTS = {
+    "Trending": "Trending",
+    "Most downloads": "Most Downloaded",
+    "Most likes": "Most Liked",
+    "Newest updated": "Newest",
+}
+_HF_SORTS = {
+    "Trending": "trendingScore",
+    "Most downloads": "downloads",
+    "Most likes": "likes",
+    "Newest updated": "lastModified",
+}
+
+
+def _hf_api_get(path: str, params=None, timeout: int = 20, attempts: int = 3):
+    """GET a Hugging Face API endpoint as JSON with the same retry policy as
+    the CivitAI helper (transient TLS/reset/5xx/429 failures)."""
+    url = path if path.startswith("http") else f"{_HF_API}/{path.lstrip('/')}"
+    if params:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+    headers = _civitai_api_headers()
+    if _REGISTRY_TOKEN_VALID:
+        headers["Authorization"] = f"Bearer {REGISTRY_TOKEN}"
+    for attempt in range(attempts):
+        last = attempt == attempts - 1
+        try:
+            with fm_security.open_url(
+                url,
+                headers=headers,
+                timeout=timeout,
+                allowed_hosts=("huggingface.co", "hf.co"),
+            ) as resp:
+                body = resp.read(fm_security.MAX_JSON_BYTES + 1)
+            if len(body) > fm_security.MAX_JSON_BYTES:
+                raise ValueError("Hugging Face response is too large")
+            return json.loads(body.decode())
+        except urllib.error.HTTPError as e:
+            if last or (e.code != 429 and e.code < 500):
+                raise
+            delay = _civitai_retry_delay(e, 1.0) if e.code == 429 else 0.7 * (attempt + 1)
+        except (urllib.error.URLError, OSError):
+            if last:
+                raise
+            delay = 0.7 * (attempt + 1)
+        time.sleep(delay)
+
+
+def _hf_search(query: str, sort: str = "Trending", adult_only: bool = False, limit: int = 24) -> dict:
+    """Search Hugging Face models. ``adult_only`` restricts to repos tagged
+    ``not-for-all-audiences`` (the Hub has no server-side 'exclude adult')."""
+    params = [
+        ("sort", _HF_SORTS.get(sort, "trendingScore")),
+        ("direction", "-1"),
+        ("limit", str(int(limit or 24))),
+    ]
+    query = (query or "").strip()
+    if query:
+        params.append(("search", query))
+    if adult_only:
+        params.append(("filter", "not-for-all-audiences"))
+    items = _hf_api_get("models", params)
+    if not isinstance(items, list):
+        items = items.get("items", []) if isinstance(items, dict) else []
+    return {"items": [m for m in items if isinstance(m, dict)]}
+
+
+def _hf_render_results(items: list) -> str:
+    """Render HF search results as HTML cards (name, metrics, tags)."""
+    parts = ['<div style="max-height:65vh;overflow-y:auto">']
+    for item in items[:60]:
+        if not isinstance(item, dict):
+            continue
+        repo = str(item.get("id") or item.get("repoId") or "?")
+        name = html.escape(repo)
+        author = html.escape(str(repo.split("/", 1)[0] if "/" in repo else "?"))
+        downloads = item.get("downloads")
+        likes = item.get("likes")
+        downloads = int(downloads) if isinstance(downloads, (int, float)) else 0
+        likes = int(likes) if isinstance(likes, (int, float)) else 0
+        updated = str(item.get("lastModified") or "")[:10]
+        raw_tags = (item.get("tags") or [])[:5]
+        tags = [html.escape(str(t)) for t in raw_tags if isinstance(t, str)]
+        adult = "not-for-all-audiences" in tags
+        adult_html = (
+            ' <span style="color:#dc2626;font-size:10px">18+</span>'
+            if adult
+            else ""
+        )
+        tag_html = " · ".join(tags)
+        extra = (
+            f'<div style="font-size:10px;color:var(--body-text-color-subdued,#6b7280)">{tag_html}</div>'
+            if tag_html
+            else ""
+        )
+        parts.append(
+            '<div style="border:1px solid var(--border-color-primary,#e5e7eb);'
+            'border-radius:8px;padding:10px;margin-bottom:6px;'
+            'background:var(--body-background-fill,#fff)">'
+            '<div style="font-size:13px;font-weight:600;'
+            'color:var(--body-text-color,#111827)">'
+            f"{name}{adult_html}"
+            '&nbsp;<span style="font-size:10px;font-weight:400;'
+            f'color:var(--body-text-color-subdued,#6b7280)">{author}</span>'
+            "</div>"
+            '<div style="font-size:11px;color:var(--body-text-color,#374151)">'
+            f"{downloads:,} downloads · {likes:,} likes · updated {updated}"
+            "</div>"
+            + extra
+            + "</div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _hf_result_options(items: list) -> list:
+    """Result dropdown choices for HF search results.
+
+    The value is the JSON payload the pick and fill handlers share:
+    ``{"engine":"hf","repo":id,"name":...}``."""
+    options = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        repo = str(item.get("id") or item.get("repoId") or "").strip()
+        if not repo:
+            continue
+        name = str(item.get("name") or repo.rsplit("/", 1)[-1] or repo)
+        downloads = item.get("downloads")
+        likes = item.get("likes")
+        stats = []
+        if isinstance(downloads, (int, float)):
+            stats.append(f"{int(downloads)}d")
+        if isinstance(likes, (int, float)):
+            stats.append(f"{int(likes)}l")
+        label = f"{name} — {repo}" + (f" ({', '.join(stats)})" if stats else "")
+        options.append(
+            (
+                label,
+                json.dumps(
+                    {"engine": "hf", "repo": repo, "name": name}, ensure_ascii=False
+                ),
+            )
+        )
+    return options
+
+
+def _hf_selection(civitai_json_str):
+    """Parse a ``{"engine":"hf","repo":...}`` payload, or None when invalid."""
+    if not civitai_json_str or civitai_json_str == "{}":
+        return None
+    try:
+        data = (
+            json.loads(civitai_json_str)
+            if isinstance(civitai_json_str, str)
+            else civitai_json_str
+        )
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("engine") != "hf":
+        return None
+    repo = str(data.get("repo") or "").strip()
+    if not repo or not _re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
+        return None
+    return {"repo": repo, "name": str(data.get("name") or "")}
+
+
+def _hf_model_files(repo: str) -> list:
+    """Weight files of one HF repo: ``{name,size,sha,url}`` entries.
+
+    Uses ``blobs=true`` so each sibling carries the LFS SHA-256 and byte size.
+    Only loadable weight extensions are kept (fm_assets.WEIGHT_EXTENSIONS)."""
+    data = _hf_api_get(f"models/{repo}", params=[("blobs", "true")])
+    siblings = data.get("siblings", []) if isinstance(data, dict) else []
+    out = []
+    for s in siblings:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("rfilename") or "").strip()
+        if not name.lower().endswith(fm_assets.WEIGHT_EXTENSIONS):
+            continue
+        url = f"https://huggingface.co/{repo}/resolve/main/{urllib.parse.quote(name, safe='/')}"
+        size = s.get("size") or (s.get("lfs") or {}).get("size") or 0
+        sha = str((s.get("lfs") or {}).get("oid") or "").strip().lower()
+        out.append(
+            {
+                "name": name,
+                "size": int(size) if isinstance(size, (int, float)) else 0,
+                "sha": sha if len(sha) == 64 else "",
+                "url": url,
+            }
+        )
+    out.sort(key=lambda f: (0 if "/" not in f["name"] else 1, f["name"]))
+    return out
+
+
+def _hf_human_size(size) -> str:
+    size = float(size or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}TB"
+
+
+def _hf_classify_file(name: str) -> str:
+    """Map an HF weight file to the recipe field it belongs in."""
+    low = str(name or "").lower()
+    base = low.rsplit("/", 1)[-1]
+    stem = low.split("/", 1)[-1] if "/" in low else low
+    if "vae" in base or "/vae" in low:
+        return "vae"
+    if any(k in base or k in stem for k in ("text_encoder", "t5", "umt5", "clip")):
+        return "te"
+    return "main"
+
+
+def _hf_fill_updates(
+    payload,
+    picked_names,
+    arch="",
+    current_name="",
+    current_desc="",
+    current_tags="",
+    current_loras="",
+    current_loras_multipliers="",
+    force_kind: str = "Auto",
+):
+    """Build the Create/Edit updates (ALL_INPUTS[1:] layout) for an HF fill.
+
+    Composite repos set URLs/URLs2 (HIGH/LOW pairs), text_encoder_URLs and
+    VAE_URLs by keyword; LoRA-kind selections go to the LoRA list the way
+    CivitAI LoRAs do. ``force_kind`` overrides the size/pair heuristic."""
+    sel = payload if isinstance(payload, dict) else None
+    if not sel or not sel.get("repo"):
+        return _civitai_none_fill(
+            "Select a Hugging Face result and pick weight files first."
+        )
+    repo = str(sel.get("repo"))
+    name = str(sel.get("name") or repo.rsplit("/", 1)[-1])
+    if not picked_names:
+        return _civitai_none_fill(
+            f"List {repo}'s weight files and pick at least one first."
+        )
+    by_name = {f["name"]: f for f in (sel.get("files") or [])}
+    if any(n not in by_name for n in picked_names):
+        return _civitai_none_fill(
+            "The weight-file list is stale — open the repo again."
+        )
+
+    picked = [by_name[n] for n in picked_names]
+    mains = [f for f in picked if _hf_classify_file(f["name"]) == "main"]
+    te = [f for f in picked if _hf_classify_file(f["name"]) == "te"]
+    vaes = [f for f in picked if _hf_classify_file(f["name"]) == "vae"]
+    names = [f["name"] for f in mains]
+    urls = [f["url"] for f in mains]
+    high_url, low_url = fm_pack.split_halves(names, urls)
+    big = max((f.get("size") or 0 for f in mains), default=0) >= 2 * 1024 * 1024 * 1024
+    pair = bool(high_url and low_url)
+    if force_kind == "LoRA":
+        kind = "lora"
+    elif force_kind == "Checkpoint":
+        kind = "checkpoint"
+    else:
+        kind = "lora" if (len(picked) == 1 and not pair and not big) else "checkpoint"
+
+    result = [gr.update()] * 33
+    if not str(current_name or "").strip():
+        result[0] = gr.update(value=name)
+    if arch:
+        result[1] = gr.update(value=str(arch))
+    if not str(current_desc or "").strip():
+        result[2] = gr.update(
+            value=f"Hugging Face repo: {repo} — {len(picked)} weight file(s)"
+        )
+    if not str(current_tags or "").strip():
+        result[31] = gr.update(value="huggingface")
+
+    if kind == "lora":
+        existing = [
+            line.strip()
+            for line in str(current_loras or "").splitlines()
+            if line.strip()
+        ]
+        known = {l.split("#", 1)[0] for l in existing}
+        appended = []
+        for f in mains:
+            if f["url"].split("#", 1)[0] in known:
+                continue
+            if len(existing) + len(appended) >= 10:
+                break
+            appended.append(f["url"])
+        if not appended and not te and not vaes:
+            return _civitai_none_fill("This LoRA URL is already in the LoRA list.")
+        existing.extend(appended)
+        mults = str(current_loras_multipliers or "").split()
+        mults += ["1"] * (len(existing) - len(mults))
+        result[12] = gr.update(value="\n".join(existing))
+        result[13] = gr.update(value=" ".join(mults[: len(existing)]))
+        status = f"Added {len(appended)} LoRA URL(s) from `{repo}` ({len(existing)}/10)."
+    else:
+        main_urls = list(high_url)
+        main_urls += [
+            f["url"] for f in mains if f["url"] not in high_url and f["url"] not in low_url
+        ]
+        if main_urls:
+            result[4] = gr.update(value="\n".join(main_urls))
+        if low_url:
+            result[5] = gr.update(value="\n".join(low_url))
+        if te:
+            result[6] = gr.update(value="\n".join(f["url"] for f in te))
+        if vaes:
+            result[7] = gr.update(value="\n".join(f["url"] for f in vaes))
+        status = f"Filled {len(picked)} file URL(s) from `{repo}`."
+    return tuple(result + [status])
+
+
+def _hf_recipe_payload(sel: dict, picked_names, architecture="", force_kind: str = "Auto"):
+    """Finetune-JSON payload for an HF repo selection (same structure as
+    CivitAI recipes: token-free public URLs, sha256 where available)."""
+    repo = sel["repo"]
+    name = str(sel.get("name") or repo.rsplit("/", 1)[-1])
+    by_name = {f["name"]: f for f in (sel.get("files") or [])}
+    picked = [by_name[n] for n in picked_names if n in by_name]
+    if not picked:
+        raise ValueError("no known weight files — open the repo again")
+
+    mains = [f for f in picked if _hf_classify_file(f["name"]) == "main"]
+    te = [f for f in picked if _hf_classify_file(f["name"]) == "te"]
+    vaes = [f for f in picked if _hf_classify_file(f["name"]) == "vae"]
+    names = [f["name"] for f in mains]
+    urls = [f["url"] for f in mains]
+    high_url, low_url = fm_pack.split_halves(names, urls)
+    pair = bool(high_url and low_url)
+    big = max((f.get("size") or 0 for f in mains), default=0) >= 2 * 1024 * 1024 * 1024
+    if force_kind == "LoRA":
+        kind = "lora"
+    elif force_kind == "Checkpoint":
+        kind = "checkpoint"
+    else:
+        kind = "lora" if (len(picked) == 1 and not pair and not big) else "checkpoint"
+
+    entry = {"name": name}
+    if architecture:
+        entry["architecture"] = str(architecture)
+    entry["description"] = f"Hugging Face repo: {repo} ({len(picked)} weight file(s))"
+    urls_notes = []
+    if kind == "lora":
+        entry["loras"] = [f["url"] for f in mains]
+        entry["loras_multipliers"] = [1] * len(entry["loras"])
+    else:
+        main_urls = list(high_url)
+        main_urls += [
+            f["url"]
+            for f in mains
+            if f["url"] not in high_url and f["url"] not in low_url
+        ]
+        entry["URLs"] = main_urls
+        if low_url:
+            entry["URLs2"] = low_url
+    if te:
+        entry["text_encoder_URLs"] = [f["url"] for f in te]
+    if vaes:
+        entry["VAE_URLs"] = [f["url"] for f in vaes]
+    entry["tags"] = ["huggingface"]
+    return {"model": entry}
+
+
+
 def _state_model_type(state_value) -> str:
     """Best-effort read of the current Wan2GP model type from the host state."""
     if isinstance(state_value, str):
@@ -2318,6 +2722,31 @@ def _civitai_extract_fill_data(
 # ═══════════════════════════════════════════════════════════════════
 
 
+def _registry_raw_url(repo: str) -> str:
+    """Raw-file base URL for a registry Space."""
+    return f"https://huggingface.co/spaces/{repo}/raw/main"
+
+
+def _registry_auth_headers() -> dict:
+    """Authorization header for raw registry fetches (gated/private Spaces)."""
+    if _REGISTRY_TOKEN_VALID:
+        return {"Authorization": f"Bearer {REGISTRY_TOKEN}"}
+    return {}
+
+
+def _registry_target_for(data) -> str:
+    """Upload target repo for a finetune def: adult-tagged entries go to the
+    adult registry, everything else to the community Space."""
+    tags = data.get("model", {}).get("tags") if isinstance(data, dict) else None
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+    if isinstance(tags, list):
+        for tag in tags:
+            if str(tag or "").strip().lower() == "adult":
+                return ADULT_REGISTRY_SPACE
+    return _REGISTRY_SOURCES[0]
+
+
 def _upload_token_problem() -> str | None:
     """Return why upload is unavailable, or ``None`` when a token exists."""
     try:
@@ -2363,7 +2792,7 @@ def _stamp_hf_username(json_data: dict) -> None:
         pass
 
 
-def _publish_family_index(api, plugin=None) -> None:
+def _publish_family_index(api, plugin=None, repo: str | None = None) -> None:
     """Refresh families.json on the HF Space (best effort).
 
     The static Space page uses it to group finetunes by Wan2GP model family.
@@ -2376,16 +2805,18 @@ def _publish_family_index(api, plugin=None) -> None:
         api.upload_file(
             path_or_fileobj=json.dumps(payload, indent=2, sort_keys=True).encode(),
             path_in_repo="families.json",
-            repo_id=REGISTRY_SPACE,
+            repo_id=repo or _REGISTRY_SOURCES[0],
             repo_type="space",
         )
     except Exception:
         pass
 
 
-def _hf_upload(fin_id, json_data, plugin=None):
+def _hf_upload(fin_id, json_data, plugin=None, target: str | None = None):
     """Upload a finetune JSON to the HF Space.
-    Tries direct commit first; falls back to PR for community submissions."""
+    Tries direct commit first; falls back to PR for community submissions.
+    ``target`` selects the registry Space; default routes ``adult``-tagged
+    entries to the adult registry, everything else to the community Space."""
     err = _validate_finetune_data(json_data, registry=True)
     if err:
         raise ValueError(err)
@@ -2398,6 +2829,7 @@ def _hf_upload(fin_id, json_data, plugin=None):
             f"{len(token_urls)} URL(s) embed a CivitAI API token (`token=`); "
             "remove the token before uploading."
         )
+    repo = target or _registry_target_for(json_data)
     from huggingface_hub import HfApi
     api = HfApi()
     if _REGISTRY_TOKEN_VALID:
@@ -2410,7 +2842,7 @@ def _hf_upload(fin_id, json_data, plugin=None):
         api.upload_file(
             path_or_fileobj=blob,
             path_in_repo=f"finetunes/{safe_id}.json",
-            repo_id=REGISTRY_SPACE,
+            repo_id=repo,
             repo_type="space",
         )
         direct_ok = True
@@ -2419,101 +2851,121 @@ def _hf_upload(fin_id, json_data, plugin=None):
         api.upload_file(
             path_or_fileobj=blob,
             path_in_repo=f"finetunes/{safe_id}.json",
-            repo_id=REGISTRY_SPACE,
+            repo_id=repo,
             repo_type="space",
             create_pr=True,
         )
     if direct_ok:
-        _publish_family_index(api, plugin)
+        _publish_family_index(api, plugin, repo)
+    return repo
 
 
-def _fetch_registry_json(fin_id):
+def _fetch_registry_json(fin_id, source: str | None = None):
     fid = _safe_model_ref(fin_id)
     if not fid:
         raise ValueError("unsafe finetune id")
-    url = f"{DEFAULT_REGISTRY}/finetunes/{fid}.json"
-    with fm_security.open_url(
-        url,
-        headers={"User-Agent": "Wan2GP-FinetuneManager/3.7"},
-        timeout=15,
-        allowed_hosts=("huggingface.co", "hf.co"),
-    ) as resp:
-        body = resp.read(fm_security.MAX_JSON_BYTES + 1)
-    if len(body) > fm_security.MAX_JSON_BYTES:
-        raise ValueError("registry JSON is too large")
-    return json.loads(body.decode("utf-8"))
+    sources = [source] if source in _REGISTRY_SOURCES else list(_REGISTRY_SOURCES)
+    last_err: Exception | None = None
+    for repo in sources:
+        url = f"{_registry_raw_url(repo)}/finetunes/{fid}.json"
+        try:
+            with fm_security.open_url(
+                url,
+                headers={
+                    "User-Agent": "Wan2GP-FinetuneManager/3.7",
+                    **_registry_auth_headers(),
+                },
+                timeout=15,
+                allowed_hosts=("huggingface.co", "hf.co"),
+            ) as resp:
+                body = resp.read(fm_security.MAX_JSON_BYTES + 1)
+            if len(body) > fm_security.MAX_JSON_BYTES:
+                raise ValueError("registry JSON is too large")
+            return json.loads(body.decode("utf-8"))
+        except Exception as exc:
+            last_err = exc
+    raise last_err if last_err else ValueError("no registry sources configured")
 
 
 def _fetch_dynamic_registry_no_cache() -> list[dict]:
-    """Dynamically list all finetunes from the HF Space by scanning
-    actual files. No index.json needed -- always in sync."""
+    """Dynamically list all finetunes from every registry Space by scanning
+    actual files. No index.json needed -- always in sync. Entries from the
+    first source win on id conflicts; every entry carries its
+    ``registry_source``."""
     try:
         from huggingface_hub import HfApi
         api = HfApi()
         if _REGISTRY_TOKEN_VALID:
             api = HfApi(token=REGISTRY_TOKEN)
-        files = api.list_repo_files(repo_id=REGISTRY_SPACE, repo_type="space")
-        fin_files = [
-            f for f in files if f.startswith("finetunes/") and f.endswith(".json")
-        ]
+        listings = {}
+        for repo in _REGISTRY_SOURCES:
+            try:
+                files = api.list_repo_files(repo_id=repo, repo_type="space")
+            except Exception:
+                continue
+            listings[repo] = [
+                f for f in files if f.startswith("finetunes/") and f.endswith(".json")
+            ]
     except Exception:
         return []
     fins = []
     seen = set()
-    for path in sorted(fin_files):
-        fid = _safe_model_ref(path[len("finetunes/") : -len(".json")])
-        if not fid or fid in seen:
-            continue
-        try:
-            data = _fetch_registry_json(fid)
-            if not isinstance(data, dict):
+    for repo, fin_files in listings.items():
+        for path in sorted(fin_files):
+            fid = _safe_model_ref(path[len("finetunes/") : -len(".json")])
+            if not fid or fid in seen:
                 continue
-            m = data.get("model", {})
-            if not isinstance(m, dict):
+            try:
+                data = _fetch_registry_json(fid, repo)
+                if not isinstance(data, dict):
+                    continue
+                m = data.get("model", {})
+                if not isinstance(m, dict):
+                    continue
+                tags_entry = m.get("tags", [])
+                if isinstance(tags_entry, str):
+                    tags_entry = [t.strip() for t in tags_entry.split(",") if t.strip()]
+                if isinstance(tags_entry, list):
+                    tags_entry = [t for t in tags_entry if t]
+                urls = m.get("URLs", [])
+                if isinstance(urls, str):
+                    urls = [urls]
+                loras = m.get("loras", [])
+                if isinstance(loras, str):
+                    loras = [loras]
+                entry = {
+                    "id": fid,
+                    "name": m.get("name", fid),
+                    "author": m.get("author", "community"),
+                    "version": m.get("version", "1.0.0"),
+                    "architecture": m.get("architecture", ""),
+                    "description": m.get("description", ""),
+                    "source": m.get("finetune_source_model"),
+                    "URLs": urls,
+                    "loras": loras,
+                    "loras_multipliers": m.get("loras_multipliers", []),
+                    "tags": tags_entry,
+                    "default_settings": {
+                        "num_inference_steps": data.get(
+                            "num_inference_steps", m.get("num_inference_steps", 30)
+                        ),
+                        "guidance_scale": data.get(
+                            "guidance_scale", m.get("guidance_scale", 5.0)
+                        ),
+                    },
+                    "registry_source": repo,
+                    "raw": _clean_utf8(data),
+                }
+                security_warnings = _check_bare_filenames(data)
+                if security_warnings:
+                    entry["security_warning"] = security_warnings[0]
+                host_warning = _unexpected_host_warning(data)
+                if host_warning:
+                    entry["host_warning"] = host_warning
+                fins.append(entry)
+                seen.add(fid)
+            except Exception:
                 continue
-            tags_entry = m.get("tags", [])
-            if isinstance(tags_entry, str):
-                tags_entry = [t.strip() for t in tags_entry.split(",") if t.strip()]
-            if isinstance(tags_entry, list):
-                tags_entry = [t for t in tags_entry if t]
-            urls = m.get("URLs", [])
-            if isinstance(urls, str):
-                urls = [urls]
-            loras = m.get("loras", [])
-            if isinstance(loras, str):
-                loras = [loras]
-            entry = {
-                "id": fid,
-                "name": m.get("name", fid),
-                "author": m.get("author", "community"),
-                "version": m.get("version", "1.0.0"),
-                "architecture": m.get("architecture", ""),
-                "description": m.get("description", ""),
-                "source": m.get("finetune_source_model"),
-                "URLs": urls,
-                "loras": loras,
-                "loras_multipliers": m.get("loras_multipliers", []),
-                "tags": tags_entry,
-                "default_settings": {
-                    "num_inference_steps": data.get(
-                        "num_inference_steps", m.get("num_inference_steps", 30)
-                    ),
-                    "guidance_scale": data.get(
-                        "guidance_scale", m.get("guidance_scale", 5.0)
-                    ),
-                },
-                "raw": _clean_utf8(data),
-            }
-            security_warnings = _check_bare_filenames(data)
-            if security_warnings:
-                entry["security_warning"] = security_warnings[0]
-            host_warning = _unexpected_host_warning(data)
-            if host_warning:
-                entry["host_warning"] = host_warning
-            fins.append(entry)
-            seen.add(fid)
-        except Exception:
-            continue
     return fins
 
 
@@ -2656,1802 +3108,6 @@ def _refresh_model_defs(plugin) -> None:
             pass
 
 
-def _pack_lora_root(plugin) -> Path:
-    getter = getattr(plugin, "get_lora_root", None) if plugin is not None else None
-    if callable(getter):
-        try:
-            root = getter()
-            if root:
-                return Path(root)
-        except Exception:
-            pass
-    return Path("loras")
-
-
-def _pack_md_cell(value) -> str:
-    return (
-        html.escape(str(value or ""), quote=False)
-        .replace("|", "\\|")
-        .replace("\n", " ")
-    )
-
-
-def _pack_status_md(manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=None) -> str:
-    st = fm_pack.catalog_status(
-        manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=custom
-    )
-    loras = st["loras"]
-    fins = st["finetunes"]
-    civ = st["civitai"]
-    l_ok = sum(1 for x in loras if x.get("present"))
-    l_bytes = sum(int(x.get("bytes") or 0) for x in loras)
-    l_exp = sum(int(x.get("expected") or 0) for x in loras)
-    f_ok = sum(1 for x in fins if x.get("weightsPresent"))
-    f_rec = sum(1 for x in fins if x.get("recipeWritten"))
-    c_ok = sum(1 for x in civ if x.get("installed"))
-    lines = [
-        f"**LoRAs:** {l_ok}/{len(loras)} installed - "
-        f"{fm_pack.human_bytes(l_bytes)} / {fm_pack.human_bytes(l_exp)}",
-        f"**Checkpoints:** {f_rec}/{len(fins)} recipes written - "
-        f"{f_ok}/{len(fins)} weight sets present",
-        f"**CivitAI:** {c_ok}/{len(civ)} installed",
-    ]
-    for group in manifest.get("groups", []):
-        gid = str(group.get("id") or "")
-        rows = [x for x in loras if x.get("group") == gid]
-        if rows:
-            ok = sum(1 for x in rows if x.get("present"))
-            lines.append(
-                f"- {html.escape(str(group.get('title') or gid), quote=False)}: "
-                f"{ok}/{len(rows)}"
-            )
-    own = [x for x in loras + fins if x.get("custom")]
-    if own:
-        ok = sum(1 for x in own if x.get("present") or x.get("weightsPresent"))
-        lines.append(f"- Added by you: {ok}/{len(own)}")
-    return "\n".join(lines)
-
-
-def _pack_details_md(manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=None) -> str:
-    st = fm_pack.catalog_status(
-        manifest, ckpts_dir, lora_dir_for, finetunes_dir, state, custom=custom
-    )
-    lines = [
-        "#### Checkpoints and recipes",
-        "| Name | Architecture | Recipe | Weights |",
-        "|---|---|---|---|",
-    ]
-    for row in st["finetunes"]:
-        assets = row.get("assets") or []
-        present = sum(1 for a in assets if a.get("present"))
-        lines.append(
-            "| {name} | {arch} | {recipe} | {present}/{total} |".format(
-                name=_pack_md_cell(row.get("name")),
-                arch=_pack_md_cell(row.get("architecture")),
-                recipe="yes" if row.get("recipeWritten") else "no",
-                present=present,
-                total=len(assets),
-            )
-        )
-    lines += [
-        "",
-        "#### CivitAI",
-        "| Name | Installed | Files |",
-        "|---|---|---|",
-    ]
-    for row in st["civitai"]:
-        lines.append(
-            "| {name} | {installed} | {present}/{total} |".format(
-                name=_pack_md_cell(row.get("name")),
-                installed="yes" if row.get("installed") else "no",
-                present=row.get("present", 0),
-                total=row.get("expected", 0),
-            )
-        )
-    return "\n".join(lines)
-
-
-def _pack_inventory_md(plugin) -> str:
-    root = _pack_lora_root(plugin)
-    inv = fm_pack.lora_inventory(root)
-    total = sum(int(x.get("bytes") or 0) for x in inv)
-    lines = [
-        f"**{len(inv)} LoRA weight files** in `"
-        + html.escape(str(root), quote=False)
-        + f"` - {fm_pack.human_bytes(total)}"
-    ]
-    if inv:
-        lines.append("")
-        for item in inv[:120]:
-            mark = "pack" if item.get("known") else ""
-            lines.append(
-                "- `"
-                + html.escape(str(item.get("rel") or ""), quote=False)
-                + "` - "
-                + fm_pack.human_bytes(item.get("bytes") or 0)
-                + (f" ({mark})" if mark else "")
-            )
-        if len(inv) > 120:
-            lines.append(f"- ... and {len(inv) - 120} more")
-    return "\n".join(lines)
-
-
-def _fmt_update_report(report: dict) -> str:
-    lines = ["#### Update check"]
-    for section, title in (
-        ("loras", "LoRAs"),
-        ("finetunes", "Checkpoints"),
-        ("civitai", "CivitAI"),
-    ):
-        rows = report.get(section) or []
-        bad = [r for r in rows if r.get("status") not in ("ok",)]
-        lines.append(f"- **{title}:** {len(rows) - len(bad)}/{len(rows)} ok")
-        for row in bad[:40]:
-            lines.append(
-                "  - `"
-                + html.escape(str(row.get("id") or ""), quote=False)
-                + "` - "
-                + html.escape(str(row.get("status") or ""), quote=False)
-            )
-        if len(bad) > 40:
-            lines.append(f"  - ... and {len(bad) - 40} more")
-    return "\n".join(lines)
-
-
-def _fmt_live_report(report: dict) -> str:
-    items = report.get("items") or []
-    changed = [x for x in items if x.get("status") in ("changed", "missing")]
-    lines = [
-        "#### Live check - "
-        + html.escape(str(report.get("checkedAt") or ""), quote=False),
-        f"- **{len(items) - len(changed)}/{len(items)}** current; "
-        f"**{len(changed)}** need attention.",
-    ]
-    for item in changed[:60]:
-        lines.append(
-            "  - `"
-            + html.escape(str(item.get("id") or ""), quote=False)
-            + "` ("
-            + html.escape(str(item.get("kind") or ""), quote=False)
-            + ") - "
-            + html.escape(str(item.get("status") or ""), quote=False)
-        )
-    if len(changed) > 60:
-        lines.append(f"  - ... and {len(changed) - 60} more")
-    unknown = [x for x in items if x.get("status") == "unknown"]
-    if unknown:
-        lines.append(
-            f"- {len(unknown)} could not be compared (source unreachable, or the "
-            "file is not in the repo tree)."
-        )
-    for err in (report.get("failed") or [])[:10]:
-        lines.append(
-            "  - ! " + html.escape(str(err or ""), quote=False)
-        )
-    if not items:
-        lines.append("- Nothing in the catalog to check.")
-    return "\n".join(lines)
-
-
-def _pack_media_html(urls, title="") -> str:
-    items = []
-    for url in urls or []:
-        u = str(url or "").strip()
-        if not u.startswith("https://") or fm_security.url_problem(u):
-            continue
-        safe = html.escape(u, quote=True)
-        if u.lower().endswith((".mp4", ".webm", ".mov")):
-            items.append(
-                f"<video src=\"{safe}\" controls muted loop "
-                "style=\"max-width:240px;max-height:180px;border-radius:8px\"></video>"
-            )
-        else:
-            items.append(
-                f"<img src=\"{safe}\" loading=\"lazy\" alt=\"{html.escape(title)}\" "
-                "style=\"max-width:240px;max-height:180px;object-fit:cover;border-radius:8px\">"
-            )
-    if not items:
-        return ""
-    return (
-        "<div style=\"display:flex;flex-wrap:wrap;gap:8px;padding:4px 0\">"
-        + "".join(items)
-        + "</div>"
-    )
-
-
-def _pack_catalog_rows(st: dict, catalog: dict) -> list[dict]:
-    """Flatten catalog status into one row per selectable item."""
-    entries = {str(x.get("id")): x for x in catalog.get("loras", [])}
-    entries.update({str(x.get("id")): x for x in catalog.get("finetunes", [])})
-    entries.update({str(x.get("id")): x for x in catalog.get("civitai", [])})
-    rows: list[dict] = []
-    for row in st.get("loras") or []:
-        entry = entries.get(str(row.get("id"))) or {}
-        state = "missing"
-        if row.get("present"):
-            state = "stale" if row.get("stale") else "installed"
-        rows.append(
-            {
-                "kind": "LoRA",
-                "id": str(row.get("id")),
-                "pick": f"lora:{row.get('id')}",
-                "name": row.get("name") or "",
-                "family": row.get("family") or entry.get("family") or "",
-                "arch": "",
-                "bytes": int(row.get("expected") or row.get("bytes") or 0),
-                "state": state,
-                "custom": bool(entry.get("custom")),
-                "entry": entry,
-            }
-        )
-    for row in st.get("finetunes") or []:
-        entry = entries.get(str(row.get("id"))) or {}
-        assets = row.get("assets") or []
-        present = sum(1 for a in assets if a.get("present"))
-        if present == len(assets) and row.get("recipeWritten"):
-            state = "installed"
-        elif present == len(assets) and assets:
-            state = "no recipe"
-        elif present:
-            state = "partial"
-        else:
-            state = "missing"
-        if any(a.get("stale") for a in assets):
-            state = "stale"
-        rows.append(
-            {
-                "kind": "Checkpoint",
-                "id": str(row.get("id")),
-                "pick": f"finetune:{row.get('id')}",
-                "name": row.get("name") or "",
-                "family": row.get("family") or entry.get("family") or "",
-                "arch": row.get("architecture") or "",
-                "bytes": int(entry.get("bytes") or 0) + int(entry.get("bytesLow") or 0),
-                "state": state,
-                "custom": bool(entry.get("custom")),
-                "entry": entry,
-            }
-        )
-    for row in st.get("civitai") or []:
-        entry = entries.get(str(row.get("id"))) or {}
-        state = "missing"
-        if row.get("installed"):
-            state = "installed"
-        elif row.get("present"):
-            state = "partial"
-        rows.append(
-            {
-                "kind": "CivitAI",
-                "id": str(row.get("id")),
-                "pick": f"civitai:{row.get('id')}",
-                "name": row.get("name") or "",
-                "family": entry.get("family") or "",
-                "arch": entry.get("architecture") or "",
-                "bytes": int(entry.get("bytesEstimate") or 0),
-                "state": state,
-                "custom": bool(entry.get("custom")),
-                "entry": entry,
-            }
-        )
-    return rows
-
-
-def _filter_catalog_rows(rows: list[dict], query: str, family: str, show: str) -> list[dict]:
-    q = str(query or "").strip().lower()
-    family = str(family or "all")
-    show = str(show or "all")
-    out = []
-    for row in rows:
-        haystack = " ".join(
-            [str(row.get("name") or ""), str(row.get("id") or ""), str(row.get("arch") or "")]
-        ).lower()
-        if q and q not in haystack:
-            continue
-        if family != "all" and str(row.get("family") or "") != family:
-            continue
-        state = str(row.get("state") or "")
-        if show == "missing" and state == "installed":
-            continue
-        if show == "installed" and state != "installed":
-            continue
-        if show == "custom" and not row.get("custom"):
-            continue
-        out.append(row)
-    return out
-
-
-def _pack_table_value(rows: list[dict]) -> list[list[str]]:
-    return [
-        [
-            str(r.get("kind") or ""),
-            str(r.get("name") or ""),
-            str(r.get("family") or ""),
-            str(r.get("arch") or ""),
-            fm_pack.human_bytes(r.get("bytes") or 0),
-            str(r.get("state") or ""),
-            "yes" if r.get("custom") else "",
-        ]
-        for r in rows
-    ]
-
-
-def _pack_pick_choices(rows: list[dict]) -> list[tuple[str, str]]:
-    return [
-        (
-            f"{r.get('name')} - {r.get('kind')} - {r.get('state')}"
-            + (" - added by you" if r.get("custom") else ""),
-            str(r.get("pick")),
-        )
-        for r in rows
-    ]
-
-
-def _pack_detail_md(row: dict | None) -> str:
-    if not row:
-        return "Select an item above."
-    entry = row.get("entry") or {}
-
-    def _text(value) -> str:
-        return html.escape(str(value or ""), quote=False)
-
-    lines = [
-        f"#### {_text(row.get('name'))}",
-        f"- **Kind:** {_text(row.get('kind'))}",
-        f"- **Family / architecture:** {_text(row.get('family') or '?')} / "
-        f"{_text(row.get('arch') or '?')}",
-        f"- **Size:** {fm_pack.human_bytes(row.get('bytes') or 0)}",
-        f"- **State:** {_text(row.get('state'))}",
-    ]
-    page = str(entry.get("repoPage") or "").strip()
-    if page.startswith("https://") and not fm_security.url_problem(page):
-        lines.append(f"- **Source:** {_text(page)}")
-    file_page = str(entry.get("filePage") or "").strip()
-    if file_page.startswith("https://") and not fm_security.url_problem(file_page):
-        lines.append(f"- **File:** {_text(entry.get('file'))} - {_text(file_page)}")
-    if entry.get("licenseNote"):
-        lines.append(f"- **Licence:** {_text(entry.get('licenseNote'))}")
-    assets = entry.get("assets") if isinstance(entry.get("assets"), list) else None
-    if assets:
-        lines.append("")
-        lines.append("**Files**")
-        for asset in assets:
-            if not isinstance(asset, dict):
-                continue
-            status = "present" if asset.get("present") else "missing"
-            lines.append(
-                f"- {_text(asset.get('path') or asset.get('source'))} - {status}"
-            )
-    return "\n".join(lines)
-
-
-def _build_pack_tab(plugin) -> None:
-    """Add the curated adult-pack catalog as a native Gradio tab."""
-    manifest = fm_pack.load_manifest()
-    state = fm_pack.load_state(_pack_state_path, manifest)
-
-    def _catalog() -> dict:
-        return fm_pack.merged_catalog(manifest, fm_pack.load_custom())
-
-    ckpts_dir = lambda: _ckpts_dir()
-    lora_dir_for = lambda arch: _lora_dir_for(arch, plugin)
-    finetunes_dir = Path(FINETUNES_DIR)
-    active = bool(state.get("enabled") and state.get("ageConfirmed"))
-    civ_active = bool(active and state.get("civitaiEnabled"))
-
-    gr.Markdown(
-        "### Adult Pack\n"
-        "Curated checkpoints and LoRAs that Wan2GP can load. Weights stay under "
-        "`adult-pack` folders; checkpoints are written as "
-        "`finetunes/adultpack_*.json` recipes. Adult content is optional and "
-        "off by default."
-    )
-    with gr.Row():
-        pack_enabled = gr.Checkbox(
-            label="Enable the adult pack", value=bool(state.get("enabled"))
-        )
-        pack_age = gr.Checkbox(
-            label="I am 18 or older and it is legal where I live",
-            value=bool(state.get("ageConfirmed")),
-        )
-    pack_gate_msg = gr.Markdown(
-        "**Adult pack enabled.** Nothing downloads until you press a download button."
-        if active
-        else "The adult pack is off. Tick both boxes to show the catalog."
-    )
-
-    def _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel) -> None:
-        state["enabled"] = bool(enabled)
-        state["ageConfirmed"] = bool(age)
-        state["civitaiEnabled"] = bool(civ_enabled)
-        state["selections"]["loras"] = [str(x) for x in (lora_sel or [])]
-        state["selections"]["finetunes"] = [str(x) for x in (ft_sel or [])]
-        state["selections"]["civitai"] = [str(x) for x in (civ_sel or [])]
-        fm_pack.save_state(state, _pack_state_path)
-
-    with gr.Column(visible=active) as pack_body:
-        with gr.Row():
-            pack_refresh = gr.Button("Refresh status")
-            pack_defaults = gr.Button("Select recommended")
-            pack_download = gr.Button("Download selected", variant="primary")
-            pack_recipes = gr.Button("Write selected recipes")
-            pack_check_updates = gr.Button("Check updates")
-            pack_verify_hashes = gr.Checkbox(label="Verify hashes", value=False, scale=0)
-        catalog = _catalog()
-        pack_status = gr.Markdown(
-            _pack_status_md(
-                manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=catalog
-            )
-            if active
-            else ""
-        )
-
-        lora_choices = [
-            (
-                f"{entry.get('name')} - {fm_pack.human_bytes(entry.get('bytes') or 0)}"
-                + (f" - {entry.get('pair')} half" if entry.get("pair") else ""),
-                str(entry.get("id")),
-            )
-            for entry in catalog.get("loras", [])
-        ]
-        fin_choices = [
-            (
-                f"{entry.get('name')} - {entry.get('architecture')} - "
-                f"{fm_pack.human_bytes(int(entry.get('bytes') or 0) + int(entry.get('bytesLow') or 0))}",
-                str(entry.get("id")),
-            )
-            for entry in catalog.get("finetunes", [])
-        ]
-        civ_choices = [
-            (
-                f"{entry.get('name')} - {entry.get('architecture') or entry.get('family')}",
-                str(entry.get("id")),
-            )
-            for entry in catalog.get("civitai", [])
-        ]
-        lora_ids = set(str(x) for x in state["selections"].get("loras", []))
-        ft_ids = set(str(x) for x in state["selections"].get("finetunes", []))
-        civ_ids = set(str(x) for x in state["selections"].get("civitai", []))
-
-        def _pack_arch_choices() -> list[tuple[str, str]]:
-            rows = _architecture_choices(plugin)
-            if rows:
-                return rows
-            return [
-                (
-                    f"{entry.get('label') or entry.get('id')} \u00b7 "
-                    f"{entry.get('architecture')}",
-                    str(entry.get("architecture")),
-                )
-                for entry in manifest.get("archMap", [])
-                if entry.get("architecture")
-            ]
-
-        initial_rows = _pack_catalog_rows(
-            fm_pack.catalog_status(
-                manifest,
-                ckpts_dir(),
-                lora_dir_for,
-                finetunes_dir,
-                state,
-                custom=catalog,
-            ),
-            catalog,
-        )
-
-        # A dropdown rejects values that are not in its choices, so the
-        # handlers below must only ever echo an architecture that is listed.
-        arch_values = {v for _, v in _pack_arch_choices()}
-
-        with gr.Tabs():
-            with gr.Tab("Catalog"):
-                gr.Markdown(
-                    "Every curated and user-added item with its live state. "
-                    "Filter the list, pick an item, then act on just that one."
-                )
-                with gr.Row():
-                    cat_q = gr.Textbox(label="Filter", scale=3, container=False)
-                    cat_family = gr.Dropdown(
-                        label="Family",
-                        choices=[("All families", "all")]
-                        + sorted(
-                            {
-                                (str(x.get("family")), str(x.get("family")))
-                                for x in catalog.get("loras", [])
-                                + catalog.get("finetunes", [])
-                                + catalog.get("civitai", [])
-                                if x.get("family")
-                            }
-                        ),
-                        value="all",
-                        allow_custom_value=True,
-                        scale=1,
-                    )
-                    cat_show = gr.Dropdown(
-                        label="Show",
-                        choices=["all", "missing", "installed", "custom"],
-                        value="all",
-                        scale=1,
-                    )
-                cat_table = gr.Dataframe(
-                    headers=[
-                        "Kind", "Name", "Family", "Architecture",
-                        "Size", "State", "Added by you",
-                    ],
-                    value=_pack_table_value(initial_rows),
-                    interactive=False,
-                    wrap=True,
-                )
-                cat_pick = gr.Dropdown(
-                    label="Item", choices=[], filterable=True, allow_custom_value=True
-                )
-                with gr.Row():
-                    cat_download = gr.Button("Download this", variant="primary")
-                    cat_recipe = gr.Button("Write recipe")
-                    cat_gallery = gr.Button("Load gallery")
-                    cat_delete = gr.Button("Delete this", variant="stop")
-                cat_detail = gr.Markdown("Select an item above.")
-                cat_media = gr.HTML("")
-                cat_log = gr.Textbox(label="Result", interactive=False)
-
-            with gr.Tab("Find & Add"):
-                gr.Markdown(
-                    "Search HuggingFace or CivitAI, inspect the files inside, and "
-                    "add one to your own list. Added items behave exactly like the "
-                    "curated ones: same download, recipe and delete paths."
-                )
-                with gr.Row():
-                    find_source = gr.Dropdown(
-                        label="Source",
-                        choices=[("HuggingFace", "hf"), ("CivitAI", "civitai")],
-                        value="hf",
-                        scale=1,
-                    )
-                    find_mode = gr.Dropdown(
-                        label="Mode",
-                        choices=[("Search", "search"), ("Browse", "browse")],
-                        value="search",
-                        scale=1,
-                    )
-                    find_query = gr.Textbox(label="Query", scale=3, container=False)
-                    find_kind = gr.Dropdown(
-                        label="Type",
-                        choices=["any", "lora", "checkpoint", "gguf"],
-                        value="any",
-                        scale=1,
-                    )
-                    find_sort = gr.Dropdown(
-                        label="Sort",
-                        choices=["trending", "downloads", "likes", "newest"],
-                        value="trending",
-                        scale=1,
-                    )
-                    find_period = gr.Dropdown(
-                        label="Period",
-                        choices=["week", "month", "year"],
-                        value="week",
-                        scale=1,
-                    )
-                    find_limit = gr.Slider(5, 50, 24, step=1, label="Limit", scale=1)
-                find_run = gr.Button("Search / Browse", variant="primary")
-                find_table = gr.Dataframe(
-                    headers=[
-                        "Title", "Family", "Architecture",
-                        "Downloads", "Updated", "Id",
-                    ],
-                    value=[],
-                    interactive=False,
-                    wrap=True,
-                )
-                find_pick = gr.Dropdown(
-                    label="Result", choices=[], filterable=True, allow_custom_value=True
-                )
-                with gr.Row():
-                    find_inspect = gr.Button("Inspect")
-                    find_version = gr.Dropdown(
-                        label="CivitAI version",
-                        choices=[],
-                        allow_custom_value=True,
-                        scale=2,
-                    )
-                    find_arch = gr.Dropdown(
-                        label="Wan2GP architecture",
-                        choices=_pack_arch_choices(),
-                        filterable=True,
-                        allow_custom_value=True,
-                        scale=2,
-                    )
-                find_files = gr.Dataframe(
-                    headers=["File", "Kind", "Size", "Half", "SHA-256"],
-                    value=[],
-                    interactive=False,
-                    wrap=True,
-                )
-                find_file_pick = gr.Dropdown(
-                    label="File", choices=[], filterable=True, allow_custom_value=True
-                )
-                with gr.Row():
-                    find_kind_override = gr.Dropdown(
-                        label="Add as",
-                        choices=["auto", "lora", "checkpoint"],
-                        value="auto",
-                        scale=1,
-                    )
-                    find_add = gr.Button("Add selected file", variant="primary")
-                find_media = gr.HTML("")
-                find_status = gr.Textbox(label="Status", interactive=False)
-                with gr.Accordion("Add by link", open=False):
-                    gr.Markdown(
-                        "Paste a HuggingFace repo (`owner/name` or its URL), a "
-                        "CivitAI model URL, or a CivitAI model id."
-                    )
-                    with gr.Row():
-                        find_url = gr.Textbox(label="Repo / URL / id", scale=3)
-                        find_url_arch = gr.Dropdown(
-                            label="Wan2GP architecture",
-                            choices=_pack_arch_choices(),
-                            filterable=True,
-                            allow_custom_value=True,
-                            scale=2,
-                        )
-                    find_url_btn = gr.Button("Resolve and inspect")
-
-            with gr.Tab("LoRAs"):
-                gr.Markdown(
-                    "Select LoRAs to download. HIGH/LOW pairs are selected "
-                    "together automatically. They land in the collection "
-                    "Wan2GP scans, under `adult-pack/`."
-                )
-                pack_lora_sel = gr.Dropdown(
-                    label="LoRAs",
-                    choices=lora_choices,
-                    value=[x for x in lora_ids if x in {v for _, v in lora_choices}],
-                    multiselect=True,
-                    filterable=True,
-                    allow_custom_value=True,
-                )
-                with gr.Row():
-                    pack_inv_btn = gr.Button("Refresh LoRA inventory")
-                    pack_delete_loras = gr.Button("Delete selected LoRAs")
-                pack_inv = gr.Markdown("")
-            with gr.Tab("Checkpoints and recipes"):
-                gr.Markdown(
-                    "Checkpoint entries become `adultpack_*.json` recipes. "
-                    "Downloading the weights and writing the recipe are separate "
-                    "actions, so you can inspect a recipe before fetching tens of GB."
-                )
-                pack_ft_sel = gr.Dropdown(
-                    label="Checkpoints / recipes",
-                    choices=fin_choices,
-                    value=[x for x in ft_ids if x in {v for _, v in fin_choices}],
-                    multiselect=True,
-                    filterable=True,
-                    allow_custom_value=True,
-                )
-                pack_details = gr.Markdown(
-                    _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog())
-                    if active
-                    else ""
-                )
-                pack_delete_fins = gr.Button("Delete selected recipes/weights")
-            with gr.Tab("CivitAI"):
-                token_state = (
-                    "configured"
-                    if CIVITAI_API_KEY
-                    else "not configured - public files still download"
-                )
-                gr.Markdown(
-                    "CivitAI is a separate opt-in. It uses `civitai.red` for adult "
-                    f"content. API token: **{token_state}**. Add `civitai_api_key` "
-                    "to the plugin's `config.json` for gated releases."
-                )
-                pack_civ_enabled = gr.Checkbox(
-                    label="Enable CivitAI downloads",
-                    value=bool(state.get("civitaiEnabled")),
-                )
-                with gr.Column(visible=civ_active) as pack_civ_body:
-                    pack_civ_sel = gr.Dropdown(
-                        label="CivitAI releases",
-                        choices=civ_choices,
-                        value=[x for x in civ_ids if x in {v for _, v in civ_choices}],
-                        multiselect=True,
-                        filterable=True,
-                        allow_custom_value=True,
-                    )
-                    pack_civ_download = gr.Button(
-                        "Download CivitAI selected", variant="primary"
-                    )
-                    pack_delete_civ = gr.Button("Delete selected CivitAI")
-                    pack_civ_status = gr.Markdown("")
-            with gr.Tab("Updates"):
-                gr.Markdown(
-                    "Compare local files with the catalog, then with what the "
-                    "sources serve today. **Check online** reads each repo's live "
-                    "file size and hash; **Apply selected** pins them; "
-                    "**Download selected** fetches the new bytes."
-                )
-                with gr.Row():
-                    pack_live_updates = gr.Button("Check online", variant="primary")
-                    pack_apply_updates = gr.Button("Apply selected")
-                    pack_download_updates = gr.Button("Download selected")
-                update_sel = gr.Dropdown(
-                    label="Update items",
-                    choices=[],
-                    multiselect=True,
-                    filterable=True,
-                    allow_custom_value=True,
-                )
-                pack_update = gr.Markdown("")
-        pack_log = gr.Textbox(label="Pack log", lines=10, interactive=False)
-
-        all_inputs = [
-            pack_enabled,
-            pack_age,
-            pack_civ_enabled,
-            pack_lora_sel,
-            pack_ft_sel,
-            pack_civ_sel,
-        ]
-
-        def _gate(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel):
-            _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel)
-            on = bool(enabled and age)
-            return (
-                gr.update(visible=on),
-                gr.update(visible=bool(on and civ_enabled)),
-                "**Adult pack enabled.** Nothing downloads until you press a download button."
-                if on
-                else "The adult pack is off. Tick both boxes to show the catalog.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog())
-                if on
-                else "",
-            )
-
-        def _save(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel):
-            _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel)
-
-        pack_enabled.change(_gate, inputs=all_inputs, outputs=[pack_body, pack_civ_body, pack_gate_msg, pack_status])
-        pack_age.change(_gate, inputs=all_inputs, outputs=[pack_body, pack_civ_body, pack_gate_msg, pack_status])
-        pack_civ_enabled.change(_gate, inputs=all_inputs, outputs=[pack_body, pack_civ_body, pack_gate_msg, pack_status])
-        pack_lora_sel.change(_save, inputs=all_inputs, outputs=[])
-        pack_ft_sel.change(_save, inputs=all_inputs, outputs=[])
-        pack_civ_sel.change(_save, inputs=all_inputs, outputs=[])
-
-        def _defaults():
-            loras = [str(x.get("id")) for x in manifest.get("loras", []) if x.get("defaultSelected")]
-            loras = fm_pack.selected_ids_with_pairs(manifest, loras)
-            fins = [str(x.get("id")) for x in manifest.get("finetunes", []) if x.get("defaultSelected")]
-            civs = [str(x.get("id")) for x in manifest.get("civitai", []) if x.get("defaultSelected")]
-            _state_from(
-                state.get("enabled"),
-                state.get("ageConfirmed"),
-                state.get("civitaiEnabled"),
-                loras,
-                fins,
-                civs,
-            )
-            return (
-                gr.update(value=loras),
-                gr.update(value=fins),
-                gr.update(value=civs),
-                "Recommended selection loaded. Review it, then download.",
-            )
-
-        pack_defaults.click(
-            _defaults,
-            inputs=[],
-            outputs=[pack_lora_sel, pack_ft_sel, pack_civ_sel, pack_log],
-        )
-
-        def _refresh():
-            return (
-                _pack_status_md(
-                    manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state,
-                    custom=_catalog(),
-                ),
-                _pack_details_md(
-                    manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state,
-                    custom=_catalog(),
-                ),
-                _pack_inventory_md(plugin),
-                *_cat_snapshot("", "all", "all", ""),
-            )
-
-        pack_refresh.click(
-            _refresh,
-            inputs=[],
-            outputs=[
-                pack_status, pack_details, pack_inv,
-                cat_table, cat_pick, cat_detail, cat_media,
-            ],
-        )
-        pack_inv_btn.click(
-            _refresh,
-            inputs=[],
-            outputs=[
-                pack_status, pack_details, pack_inv,
-                cat_table, cat_pick, cat_detail, cat_media,
-            ],
-        )
-
-        def _download(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel, progress=gr.Progress()):
-            if not (enabled and age):
-                return "Enable the 18+ gate first.", "", "", ""
-            _state_from(enabled, age, civ_enabled, lora_sel, ft_sel, civ_sel)
-            lora_ids = fm_pack.selected_ids_with_pairs(_catalog(), lora_sel or [])
-            ft_ids = [str(x) for x in (ft_sel or [])]
-            civ_ids = [str(x) for x in (civ_sel or [])] if civ_enabled else []
-            loras = {str(x.get("id")): x for x in _catalog().get("loras", [])}
-            fins = {str(x.get("id")): x for x in _catalog().get("finetunes", [])}
-            civs = {str(x.get("id")): x for x in _catalog().get("civitai", [])}
-            total = fm_pack.selected_total_bytes(_catalog(), lora_ids, ft_ids)
-            for ident in civ_ids:
-                total += int((civs.get(ident) or {}).get("bytesEstimate") or 0)
-            done = 0
-            log: list[str] = []
-
-            def cb(n, _t, label):
-                nonlocal done
-                progress(
-                    (min(done + int(n or 0), total or done + int(n or 0)), total or done + int(n or 0)),
-                    desc=label,
-                )
-
-            for ident in lora_ids:
-                entry = loras.get(ident)
-                if not entry:
-                    continue
-                try:
-                    res = fm_pack.fetch_lora(
-                        entry,
-                        lora_dir_for,
-                        token=CIVITAI_API_KEY,
-                        progress=cb,
-                        pins=state.get("pins"),
-                    )
-                    done += int(res.get("bytes") or 0)
-                    log.append(f"[OK] LoRA {entry.get('name')}: {res.get('status')}")
-                except Exception as exc:
-                    log.append(f"[FAIL] LoRA {entry.get('name')}: {exc}")
-            for ident in ft_ids:
-                entry = fins.get(ident)
-                if not entry:
-                    continue
-                results = fm_pack.fetch_finetune(
-                    entry,
-                    ckpts_dir(),
-                    token=CIVITAI_API_KEY,
-                    progress=cb,
-                    pins=state.get("pins"),
-                )
-                for res in results:
-                    done += int(res.get("bytes") or 0)
-                    if res.get("ok") is False or res.get("error"):
-                        log.append(f"[FAIL] {entry.get('name')}: {res.get('error')}")
-                    else:
-                        log.append(f"[OK] {entry.get('name')}: {res.get('status')}")
-            for ident in civ_ids:
-                spec = civs.get(ident)
-                if not spec:
-                    continue
-                try:
-                    res = fm_pack.fetch_civitai(
-                        spec,
-                        ckpts_dir=ckpts_dir(),
-                        lora_dir_for=lora_dir_for,
-                        finetunes_dir=finetunes_dir,
-                        site="civitai.red",
-                        token=CIVITAI_API_KEY,
-                        progress=cb,
-                        pinned=(state.get("civitaiPinned") or {}).get(ident),
-                    )
-                    done += int(res.get("bytes") or 0)
-                    state.setdefault("civitaiPinned", {})[ident] = res.get("versionId")
-                    state.setdefault("civitaiInstalled", {})[ident] = {
-                        "files": res.get("paths") or [],
-                        "kind": res.get("kind"),
-                        "bytes": res.get("bytes") or 0,
-                        "versionId": res.get("versionId"),
-                    }
-                    log.append(f"[OK] CivitAI {spec.get('name')}: {res.get('kind')}")
-                except Exception as exc:
-                    log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
-            fm_pack.save_state(state, _pack_state_path)
-            _refresh_model_defs(plugin)
-            return (
-                "\n".join(log) or "Nothing selected.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                "",
-            )
-
-        pack_download.click(
-            _download,
-            inputs=all_inputs,
-            outputs=[pack_log, pack_status, pack_details, pack_civ_status],
-            show_progress="full",
-        )
-
-        def _recipes(enabled, age, ft_sel):
-            if not (enabled and age):
-                return "Enable the 18+ gate first.", "", "", ""
-            fins = {str(x.get("id")): x for x in _catalog().get("finetunes", [])}
-            log: list[str] = []
-            for ident in [str(x) for x in (ft_sel or [])]:
-                entry = fins.get(ident)
-                if not entry:
-                    continue
-                try:
-                    p = fm_pack.write_recipe(entry, finetunes_dir)
-                    log.append(f"[OK] wrote {p}")
-                except Exception as exc:
-                    log.append(f"[FAIL] {entry.get('name')}: {exc}")
-            _refresh_model_defs(plugin)
-            return (
-                "\n".join(log) or "Nothing selected.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                "",
-            )
-
-        pack_recipes.click(
-            _recipes,
-            inputs=[pack_enabled, pack_age, pack_ft_sel],
-            outputs=[pack_log, pack_status, pack_details, pack_civ_status],
-        )
-
-        def _civ_download(enabled, age, civ_enabled, civ_sel, progress=gr.Progress()):
-            if not (enabled and age):
-                return "Enable the 18+ gate first.", "", "", ""
-            if not civ_enabled:
-                return "Enable CivitAI downloads first.", "", "", ""
-            civs = {str(x.get("id")): x for x in _catalog().get("civitai", [])}
-            log: list[str] = []
-            for ident in [str(x) for x in (civ_sel or [])]:
-                spec = civs.get(ident)
-                if not spec:
-                    continue
-                try:
-                    res = fm_pack.fetch_civitai(
-                        spec,
-                        ckpts_dir=ckpts_dir(),
-                        lora_dir_for=lora_dir_for,
-                        finetunes_dir=finetunes_dir,
-                        site="civitai.red",
-                        token=CIVITAI_API_KEY,
-                        progress=lambda n, t, label: progress(
-                            (n, t or n), desc=label
-                        ),
-                        pinned=(state.get("civitaiPinned") or {}).get(ident),
-                    )
-                    state.setdefault("civitaiPinned", {})[ident] = res.get("versionId")
-                    state.setdefault("civitaiInstalled", {})[ident] = {
-                        "files": res.get("paths") or [],
-                        "kind": res.get("kind"),
-                        "bytes": res.get("bytes") or 0,
-                        "versionId": res.get("versionId"),
-                    }
-                    log.append(f"[OK] CivitAI {spec.get('name')}: {res.get('kind')}")
-                except Exception as exc:
-                    log.append(f"[FAIL] CivitAI {spec.get('name')}: {exc}")
-            fm_pack.save_state(state, _pack_state_path)
-            _refresh_model_defs(plugin)
-            return (
-                "\n".join(log) or "Nothing selected.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                "\n".join(log) or "Nothing selected.",
-            )
-
-        pack_civ_download.click(
-            _civ_download,
-            inputs=[pack_enabled, pack_age, pack_civ_enabled, pack_civ_sel],
-            outputs=[pack_log, pack_status, pack_details, pack_civ_status],
-            show_progress="full",
-        )
-
-        def _delete_loras(enabled, age, lora_sel):
-            if not (enabled and age):
-                return "Enable the 18+ gate first.", "", "", ""
-            loras = {str(x.get("id")): x for x in _catalog().get("loras", [])}
-            log: list[str] = []
-            for ident in fm_pack.selected_ids_with_pairs(_catalog(), lora_sel or []):
-                entry = loras.get(ident)
-                if not entry:
-                    continue
-                try:
-                    res = fm_pack.delete_lora(entry, lora_dir_for)
-                    if res.get("removed"):
-                        log.append(f"[OK] deleted {entry.get('name')}")
-                    else:
-                        log.append(f"[SKIP] {entry.get('name')}: not present")
-                except Exception as exc:
-                    log.append(f"[FAIL] {entry.get('name')}: {exc}")
-            fm_pack.save_state(state, _pack_state_path)
-            return (
-                "\n".join(log) or "Nothing selected.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _fmt_update_report(
-                    fm_pack.update_report(
-                        manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state
-                    )
-                ),
-            )
-
-        pack_delete_loras.click(
-            _delete_loras,
-            inputs=[pack_enabled, pack_age, pack_lora_sel],
-            outputs=[pack_log, pack_status, pack_details, pack_update],
-        )
-
-        def _delete_fins(enabled, age, ft_sel):
-            if not (enabled and age):
-                return "Enable the 18+ gate first.", "", "", ""
-            fins = {str(x.get("id")): x for x in _catalog().get("finetunes", [])}
-            log: list[str] = []
-            for ident in [str(x) for x in (ft_sel or [])]:
-                entry = fins.get(ident)
-                if not entry:
-                    continue
-                try:
-                    res = fm_pack.delete_finetune(entry, ckpts_dir(), finetunes_dir)
-                    parts = []
-                    if res.get("removedRecipe"):
-                        parts.append("recipe")
-                    if res.get("removedWeights"):
-                        parts.append(f"{len(res['removedWeights'])} weight(s)")
-                    log.append(
-                        f"[OK] {entry.get('name')}: deleted {', '.join(parts) if parts else 'nothing present'}"
-                    )
-                except Exception as exc:
-                    log.append(f"[FAIL] {entry.get('name')}: {exc}")
-            _refresh_model_defs(plugin)
-            return (
-                "\n".join(log) or "Nothing selected.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _fmt_update_report(
-                    fm_pack.update_report(
-                        manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state
-                    )
-                ),
-            )
-
-        pack_delete_fins.click(
-            _delete_fins,
-            inputs=[pack_enabled, pack_age, pack_ft_sel],
-            outputs=[pack_log, pack_status, pack_details, pack_update],
-        )
-
-        def _delete_civ(enabled, age, civ_enabled, civ_sel):
-            if not (enabled and age):
-                return "Enable the 18+ gate first.", "", "", ""
-            if not civ_enabled:
-                return "Enable CivitAI downloads first.", "", "", ""
-            civs = {str(x.get("id")): x for x in _catalog().get("civitai", [])}
-            log: list[str] = []
-            for ident in [str(x) for x in (civ_sel or [])]:
-                spec = civs.get(ident)
-                if not spec:
-                    continue
-                try:
-                    res = fm_pack.delete_civitai(
-                        spec, state, ckpts_dir(), lora_dir_for, finetunes_dir
-                    )
-                    parts = []
-                    if res.get("removedFiles"):
-                        parts.append(f"{len(res['removedFiles'])} file(s)")
-                    if res.get("removedRecipe"):
-                        parts.append("recipe")
-                    log.append(
-                        f"[OK] {spec.get('name')}: deleted {', '.join(parts) if parts else 'nothing present'}"
-                    )
-                except Exception as exc:
-                    log.append(f"[FAIL] {spec.get('name')}: {exc}")
-            fm_pack.save_state(state, _pack_state_path)
-            return (
-                "\n".join(log) or "Nothing selected.",
-                _pack_status_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _pack_details_md(manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state, custom=_catalog()),
-                _fmt_update_report(
-                    fm_pack.update_report(
-                        manifest, ckpts_dir(), lora_dir_for, finetunes_dir, state
-                    )
-                ),
-            )
-
-        pack_delete_civ.click(
-            _delete_civ,
-            inputs=[pack_enabled, pack_age, pack_civ_enabled, pack_civ_sel],
-            outputs=[pack_log, pack_status, pack_details, pack_update],
-        )
-
-        def _check_updates(verify):
-            report = fm_pack.update_report(
-                manifest,
-                ckpts_dir(),
-                lora_dir_for,
-                finetunes_dir,
-                state,
-                verify_hashes=bool(verify),
-                custom=_catalog(),
-            )
-            return _fmt_update_report(report)
-
-        pack_check_updates.click(
-            _check_updates,
-            inputs=[pack_verify_hashes],
-            outputs=[pack_update],
-        )
-
-        # -- Updates: compare with the live sources, pin, download -------
-        def _fetch_one(row, progress):
-            """Download one catalog row; mirrors the Catalog tab action."""
-            entry = row["entry"]
-            if row["kind"] == "LoRA":
-                res = fm_pack.fetch_lora(
-                    entry,
-                    lora_dir_for,
-                    token=CIVITAI_API_KEY,
-                    pins=state.get("pins"),
-                    progress=lambda n, t, label: progress((n, t or n), desc=label),
-                )
-                return f"[OK] {entry.get('name')}: {res.get('status')}"
-            if row["kind"] == "Checkpoint":
-                results = fm_pack.fetch_finetune(
-                    entry,
-                    ckpts_dir(),
-                    token=CIVITAI_API_KEY,
-                    pins=state.get("pins"),
-                    progress=lambda n, t, label: progress((n, t or n), desc=label),
-                )
-                failed = [r for r in results if r.get("ok") is False or r.get("error")]
-                if failed:
-                    raise RuntimeError(str(failed[0].get("error")))
-                return f"[OK] {entry.get('name')}: weights present"
-            res = fm_pack.fetch_civitai(
-                entry,
-                ckpts_dir=ckpts_dir(),
-                lora_dir_for=lora_dir_for,
-                finetunes_dir=finetunes_dir,
-                site="civitai.red",
-                token=CIVITAI_API_KEY,
-                progress=lambda n, t, label: progress((n, t or n), desc=label),
-                pinned=(state.get("civitaiPinned") or {}).get(row["id"]),
-            )
-            state.setdefault("civitaiPinned", {})[row["id"]] = res.get("versionId")
-            state.setdefault("civitaiInstalled", {})[row["id"]] = {
-                "files": res.get("paths") or [],
-                "kind": res.get("kind"),
-                "bytes": res.get("bytes") or 0,
-                "versionId": res.get("versionId"),
-            }
-            return f"[OK] {entry.get('name')}: {res.get('kind')}"
-
-        def _entry_rows():
-            rows, _cat = _rows_now()
-            return {r["id"]: r for r in rows}
-
-        def _live_updates():
-            report = fm_pack.live_update_report(
-                _catalog(),
-                ckpts_dir(),
-                lora_dir_for,
-                finetunes_dir,
-                state,
-                token=CIVITAI_API_KEY,
-            )
-            changed = [r for r in report.get("items", []) if r.get("status") != "current"]
-            choices = [
-                (f"{r.get('name')} - {r.get('kind')} - {r.get('status')}", str(r.get("id")))
-                for r in changed
-            ]
-            return _fmt_live_report(report), gr.update(choices=choices, value=[])
-
-        pack_live_updates.click(
-            _live_updates,
-            inputs=[],
-            outputs=[pack_update, update_sel],
-        )
-
-        def _apply_updates(ids):
-            ids = [str(x) for x in (ids or [])]
-            if not ids:
-                return "Pick update items first.", *_cat_snapshot("", "all", "all", "")
-            applied = fm_pack.apply_updates(state, ids)
-            fm_pack.save_state(state, _pack_state_path)
-            lines = [
-                f"[PIN] {k} -> {v.get('sha256', '')[:12]} ({v.get('bytes')} B)"
-                for k, v in sorted((applied.get("pins") or {}).items())
-            ]
-            lines += [
-                f"[PIN] civitai {k} -> v{v}"
-                for k, v in sorted((applied.get("civitaiPinned") or {}).items())
-            ]
-            for skip in applied.get("skipped") or []:
-                lines.append(f"[SKIP] {skip.get('id')}: {skip.get('reason')}")
-            if not (applied.get("applied") or applied.get("skipped")):
-                lines.append("Nothing to pin - run Check online first.")
-            return (
-                "\n".join(lines),
-                *_cat_snapshot("", "all", "all", ""),
-            )
-
-        pack_apply_updates.click(
-            _apply_updates,
-            inputs=[update_sel],
-            outputs=[pack_update, cat_table, cat_pick, cat_detail, cat_media],
-        )
-
-        def _download_updates(ids, progress=gr.Progress()):
-            ids = [str(x) for x in (ids or [])]
-            if not ids:
-                return "Pick update items first.", *_cat_snapshot("", "all", "all", "")
-            rows = _entry_rows()
-            log: list[str] = []
-            for raw in ids:
-                row = rows.get(str(raw).partition("#")[0])
-                if not row:
-                    log.append(f"[SKIP] {raw}: not in the catalog")
-                    continue
-                try:
-                    log.append(_fetch_one(row, progress))
-                except Exception as exc:
-                    log.append(f"[FAIL] {row.get('name')}: {exc}")
-            fm_pack.save_state(state, _pack_state_path)
-            return (
-                "\n".join(log) or "Nothing to download.",
-                *_cat_snapshot("", "all", "all", ""),
-            )
-
-        pack_download_updates.click(
-            _download_updates,
-            inputs=[update_sel],
-            outputs=[pack_update, cat_table, cat_pick, cat_detail, cat_media],
-            show_progress="full",
-        )
-
-        # ── Catalog: filter, select one item, act on it ──────────────────
-        def _rows_now():
-            cat = _catalog()
-            st = fm_pack.catalog_status(
-                manifest,
-                ckpts_dir(),
-                lora_dir_for,
-                finetunes_dir,
-                state,
-                custom=cat,
-            )
-            return _pack_catalog_rows(st, cat), cat
-
-        def _cat_snapshot(query, family, show, pick):
-            rows, _cat = _rows_now()
-            shown = _filter_catalog_rows(rows, query, family, show)
-            choices = _pack_pick_choices(shown)
-            valid = {value for _, value in choices}
-            pick = pick if pick in valid else None
-            row = next((r for r in shown if r["pick"] == pick), None)
-            media = (
-                _pack_media_html([row["entry"].get("preview")], row.get("name"))
-                if row
-                else ""
-            )
-            return (
-                _pack_table_value(shown),
-                gr.update(choices=choices, value=pick),
-                _pack_detail_md(row),
-                media,
-            )
-
-        def _cat_filter(query, family, show, pick):
-            return _cat_snapshot(query, family, show, pick)
-
-        cat_q.change(
-            _cat_filter,
-            inputs=[cat_q, cat_family, cat_show, cat_pick],
-            outputs=[cat_table, cat_pick, cat_detail, cat_media],
-        )
-        cat_family.change(
-            _cat_filter,
-            inputs=[cat_q, cat_family, cat_show, cat_pick],
-            outputs=[cat_table, cat_pick, cat_detail, cat_media],
-        )
-        cat_show.change(
-            _cat_filter,
-            inputs=[cat_q, cat_family, cat_show, cat_pick],
-            outputs=[cat_table, cat_pick, cat_detail, cat_media],
-        )
-
-        def _cat_select(pick):
-            rows, _cat = _rows_now()
-            row = next((r for r in rows if r["pick"] == pick), None)
-            return (
-                _pack_detail_md(row),
-                _pack_media_html([row["entry"].get("preview")], row.get("name"))
-                if row
-                else "",
-            )
-
-        cat_pick.change(
-            _cat_select,
-            inputs=[cat_pick],
-            outputs=[cat_detail, cat_media],
-        )
-
-        def _cat_row(pick):
-            rows, cat = _rows_now()
-            return next((r for r in rows if r["pick"] == pick), None), cat
-
-        def _cat_download_one(pick, query, family, show, progress=gr.Progress()):
-            row, _cat = _cat_row(pick)
-            if not row:
-                return "Pick an item first.", *_cat_snapshot(query, family, show, pick)
-            try:
-                msg = _fetch_one(row, progress)
-                fm_pack.save_state(state, _pack_state_path)
-                _refresh_model_defs(plugin)
-            except Exception as exc:
-                msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
-            return (
-                msg,
-                *_cat_snapshot(query, family, show, pick),
-            )
-
-        cat_download.click(
-            _cat_download_one,
-            inputs=[cat_pick, cat_q, cat_family, cat_show],
-            outputs=[cat_log, cat_table, cat_pick, cat_detail, cat_media],
-            show_progress="full",
-        )
-
-        def _cat_recipe_one(pick, query, family, show):
-            row, _cat = _cat_row(pick)
-            if not row:
-                return "Pick a checkpoint first.", *_cat_snapshot(query, family, show, pick)
-            if row["kind"] != "Checkpoint":
-                return (
-                    "Recipes only exist for checkpoints.",
-                    *_cat_snapshot(query, family, show, pick),
-                )
-            try:
-                p = fm_pack.write_recipe(row["entry"], finetunes_dir)
-                _refresh_model_defs(plugin)
-                msg = f"[OK] wrote {p}"
-            except Exception as exc:
-                msg = f"[FAIL] {row['entry'].get('name')}: {exc}"
-            return (msg, *_cat_snapshot(query, family, show, pick))
-
-        cat_recipe.click(
-            _cat_recipe_one,
-            inputs=[cat_pick, cat_q, cat_family, cat_show],
-            outputs=[cat_log, cat_table, cat_pick, cat_detail, cat_media],
-        )
-
-        def _cat_delete_one(pick, query, family, show):
-            row, _cat = _cat_row(pick)
-            if not row:
-                return "Pick an item first.", *_cat_snapshot(query, family, show, pick)
-            entry = row["entry"]
-            try:
-                if row["kind"] == "LoRA":
-                    res = fm_pack.delete_lora(entry, lora_dir_for)
-                    done = bool(res.get("removed"))
-                elif row["kind"] == "Checkpoint":
-                    res = fm_pack.delete_finetune(entry, ckpts_dir(), finetunes_dir)
-                    done = bool(res.get("removedWeights") or res.get("removedRecipe"))
-                else:
-                    res = fm_pack.delete_civitai(
-                        entry, state, ckpts_dir(), lora_dir_for, finetunes_dir
-                    )
-                    done = bool(res.get("removedFiles") or res.get("removedRecipe"))
-                if entry.get("custom"):
-                    fm_pack.drop_custom(row["id"])
-                    done = True
-                fm_pack.save_state(state, _pack_state_path)
-                _refresh_model_defs(plugin)
-                msg = (
-                    f"[OK] {entry.get('name')}: deleted"
-                    if done
-                    else f"[SKIP] {entry.get('name')}: nothing present"
-                )
-            except Exception as exc:
-                msg = f"[FAIL] {entry.get('name')}: {exc}"
-            return (
-                msg,
-                *_cat_snapshot(query, family, show, "" if entry.get("custom") else pick),
-            )
-
-        cat_delete.click(
-            _cat_delete_one,
-            inputs=[cat_pick, cat_q, cat_family, cat_show],
-            outputs=[cat_log, cat_table, cat_pick, cat_detail, cat_media],
-        )
-
-        def _cat_gallery(pick):
-            row, _cat = _cat_row(pick)
-            if not row:
-                return "", "Pick an item first."
-            entry = row["entry"]
-            urls = []
-            if entry.get("preview"):
-                urls.append(entry["preview"])
-            try:
-                if row["kind"] == "CivitAI":
-                    data = fm_pack.civitai_gallery(entry, token=CIVITAI_API_KEY)
-                    urls += [x.get("url") for x in data.get("images") or []]
-                else:
-                    repo = str(entry.get("repo") or "")
-                    if not repo:
-                        page = str(entry.get("repoPage") or "")
-                        marker = "huggingface.co/"
-                        if marker in page:
-                            repo = page.split(marker, 1)[1].split("/")[:2]
-                            repo = "/".join(repo)
-                    if repo:
-                        data = fm_pack.hf_gallery(repo)
-                        urls += [x.get("url") for x in data.get("images") or []]
-                        urls += [x.get("url") for x in data.get("videos") or []]
-                html_out = _pack_media_html(urls, row.get("name"))
-                return (
-                    html_out,
-                    "" if html_out else "No gallery images found for this item.",
-                )
-            except Exception as exc:
-                return "", f"[FAIL] gallery: {exc}"
-
-        cat_gallery.click(
-            _cat_gallery,
-            inputs=[cat_pick],
-            outputs=[cat_media, cat_log],
-        )
-
-        # ── Find & Add ──────────────────────────────────────────────────
-        find_items_state = gr.State([])
-        find_info_state = gr.State({})
-
-        def _find_run(source, mode, query, kind, sort, period, limit):
-            try:
-                if mode == "browse":
-                    items = (
-                        fm_pack.civitai_browse(
-                            manifest,
-                            sort=sort,
-                            period=period,
-                            kind=kind,
-                            limit=int(limit),
-                            token=CIVITAI_API_KEY,
-                        )
-                        if source == "civitai"
-                        else fm_pack.hf_browse(
-                            manifest, sort=sort, kind=kind, limit=int(limit)
-                        )
-                    )
-                else:
-                    items = (
-                        fm_pack.civitai_search(
-                            manifest,
-                            query,
-                            kind=kind,
-                            limit=int(limit),
-                            token=CIVITAI_API_KEY,
-                        )
-                        if source == "civitai"
-                        else fm_pack.hf_search(
-                            manifest, query, kind=kind, limit=int(limit)
-                        )
-                    )
-            except Exception as exc:
-                return (
-                    [],
-                    [],
-                    gr.update(choices=[], value=None),
-                    f"[FAIL] {exc}",
-                )
-            rows = [
-                [
-                    x.get("title") or "",
-                    x.get("family") or "",
-                    x.get("architecture") or "",
-                    x.get("downloads") or 0,
-                    x.get("updated") or x.get("releasedAt") or "",
-                    x.get("id"),
-                ]
-                for x in items
-            ]
-            choices = [
-                (f"{x.get('title')} - {x.get('family')} - {x.get('architecture')}", str(i))
-                for i, x in enumerate(items)
-            ]
-            note = (
-                "Nothing matched - try a broader query or another type."
-                if not items
-                else f"{len(items)} result(s). Pick one, then Inspect."
-            )
-            return items, rows, gr.update(choices=choices, value=None), note
-
-        find_run.click(
-            _find_run,
-            inputs=[
-                find_source,
-                find_mode,
-                find_query,
-                find_kind,
-                find_sort,
-                find_period,
-                find_limit,
-            ],
-            outputs=[find_items_state, find_table, find_pick, find_status],
-        )
-
-        def _find_inspect(idx, items, arch, version):
-            try:
-                item = (items or [])[int(idx)]
-            except Exception:
-                return (
-                    {},
-                    [],
-                    gr.update(choices=[], value=None),
-                    gr.update(choices=[], value=None),
-                    "",
-                    gr.update(),
-                    "Pick a result first.",
-                )
-            chosen_arch = str(arch or item.get("architecture") or "")
-            try:
-                info = fm_pack.inspect_source(
-                    manifest,
-                    item.get("source"),
-                    str(item.get("id")),
-                    architecture=chosen_arch,
-                    version=version or item.get("versionId"),
-                    token=CIVITAI_API_KEY,
-                )
-            except Exception as exc:
-                return (
-                    {},
-                    [],
-                    gr.update(choices=[], value=None),
-                    gr.update(choices=[], value=None),
-                    "",
-                    gr.update(),
-                    f"[FAIL] {exc}",
-                )
-            files = info.get("files") or []
-            rows = [
-                [
-                    f.get("file"),
-                    f.get("kind"),
-                    fm_pack.human_bytes(f.get("bytes") or 0),
-                    f.get("pair") or "",
-                    str(f.get("sha256") or "")[:16],
-                ]
-                for f in files
-            ]
-            file_choices = [
-                (
-                    f"{f.get('file')} - {f.get('kind')} - "
-                    f"{fm_pack.human_bytes(f.get('bytes') or 0)}",
-                    str(i),
-                )
-                for i, f in enumerate(files)
-            ]
-            versions = info.get("versions") or []
-            version_choices = [
-                (
-                    f"{v.get('name') or v.get('id')} - {v.get('baseModel') or ''} "
-                    f"({v.get('fileCount')} file(s))",
-                    str(v.get("id")),
-                )
-                for v in versions
-            ]
-            urls = [info.get("preview")] + [
-                x.get("url") for x in info.get("samples") or []
-            ]
-            note = (
-                f"{info.get('title')} - {len(files)} loadable file(s). "
-                "Pick a file, then Add."
-                if files
-                else "No loadable files found (needs .safetensors or .gguf)."
-            )
-            return (
-                info,
-                rows,
-                gr.update(choices=file_choices, value=None),
-                gr.update(
-                    choices=version_choices,
-                    value=str(info.get("versionId") or "") or None,
-                ),
-                _pack_media_html(urls, info.get("title")),
-                gr.update(value=chosen_arch if chosen_arch in arch_values else None),
-                note,
-            )
-
-        find_inspect.click(
-            _find_inspect,
-            inputs=[find_pick, find_items_state, find_arch, find_version],
-            outputs=[
-                find_info_state,
-                find_files,
-                find_file_pick,
-                find_version,
-                find_media,
-                find_arch,
-                find_status,
-            ],
-        )
-        find_version.change(
-            _find_inspect,
-            inputs=[find_pick, find_items_state, find_arch, find_version],
-            outputs=[
-                find_info_state,
-                find_files,
-                find_file_pick,
-                find_version,
-                find_media,
-                find_arch,
-                find_status,
-            ],
-        )
-
-        def _find_add(info, file_idx, kind_override, arch):
-            if not info:
-                return "Inspect a result first.", *_cat_snapshot("", "all", "all", "")
-            files = info.get("files") or []
-            try:
-                f = files[int(file_idx)]
-            except Exception:
-                return "Pick a file first.", *_cat_snapshot("", "all", "all", "")
-            chosen_arch = str(arch or info.get("architecture") or "")
-            if not chosen_arch:
-                return "Pick the Wan2GP architecture first.", *_cat_snapshot(
-                    "", "all", "all", ""
-                )
-            kind = f.get("kind") if kind_override == "auto" else kind_override
-            source = str(info.get("source") or "")
-            family = fm_pack.family_for_arch(manifest, chosen_arch)
-            if not family:
-                hit = fm_pack.match_arch(manifest, str(info.get("title") or ""))
-                family = str((hit or {}).get("id") or "")
-            try:
-                entry = fm_pack.build_custom_entry(
-                    source=source,
-                    title=str(info.get("title") or ""),
-                    file=str(f.get("file") or ""),
-                    url=str(f.get("url") or ""),
-                    architecture=chosen_arch,
-                    kind=str(kind or "checkpoint"),
-                    bytes=int(f.get("bytes") or 0),
-                    sha256=f.get("sha256"),
-                    repo=str(info.get("id") or "") if source == "hf" else "",
-                    repo_path=str(f.get("file") or ""),
-                    preview=str(info.get("preview") or ""),
-                    repo_page=str(info.get("repoPage") or ""),
-                    file_page="",
-                    wan2gp_ids=[chosen_arch],
-                    family=family,
-                    needs_token=bool(f.get("needsToken")),
-                )
-                fm_pack.add_custom(entry)
-                msg = (
-                    f"[OK] added {entry.get('name')} - fetch it from the Catalog tab."
-                )
-                pick = ("lora:" if entry.get("group") == "custom" else "finetune:") + str(
-                    entry.get("id")
-                )
-            except Exception as exc:
-                return f"[FAIL] {exc}", *_cat_snapshot("", "all", "all", "")
-            return (msg, *_cat_snapshot("", "all", "all", pick))
-
-        find_add.click(
-            _find_add,
-            inputs=[find_info_state, find_file_pick, find_kind_override, find_arch],
-            outputs=[
-                find_status,
-                cat_table,
-                cat_pick,
-                cat_detail,
-                cat_media,
-            ],
-        )
-
-        def _find_url_resolve(text, arch):
-            parsed = fm_pack.parse_source_url(text)
-            if not parsed:
-                return (
-                    {},
-                    [],
-                    gr.update(choices=[], value=None),
-                    gr.update(choices=[], value=None),
-                    "",
-                    None,
-                    "Paste a HuggingFace repo/URL, a CivitAI model URL, or a CivitAI model id.",
-                )
-            source, ident = parsed
-            try:
-                info = fm_pack.inspect_source(
-                    manifest,
-                    source,
-                    ident,
-                    architecture=str(arch or ""),
-                    token=CIVITAI_API_KEY,
-                )
-            except Exception as exc:
-                return (
-                    {},
-                    [],
-                    gr.update(choices=[], value=None),
-                    gr.update(choices=[], value=None),
-                    "",
-                    None,
-                    f"[FAIL] {exc}",
-                )
-            files = info.get("files") or []
-            rows = [
-                [
-                    f.get("file"),
-                    f.get("kind"),
-                    fm_pack.human_bytes(f.get("bytes") or 0),
-                    f.get("pair") or "",
-                    str(f.get("sha256") or "")[:16],
-                ]
-                for f in files
-            ]
-            file_choices = [
-                (
-                    f"{f.get('file')} - {f.get('kind')} - "
-                    f"{fm_pack.human_bytes(f.get('bytes') or 0)}",
-                    str(i),
-                )
-                for i, f in enumerate(files)
-            ]
-            version_choices = [
-                (
-                    f"{v.get('name') or v.get('id')} - {v.get('baseModel') or ''} "
-                    f"({v.get('fileCount')} file(s))",
-                    str(v.get("id")),
-                )
-                for v in info.get("versions") or []
-            ]
-            urls = [info.get("preview")] + [
-                x.get("url") for x in info.get("samples") or []
-            ]
-            note = (
-                f"Found {info.get('title')} ({source}) - {len(files)} file(s). "
-                "Pick one and Add, or change the architecture first."
-                if files
-                else "No loadable files found (needs .safetensors or .gguf)."
-            )
-            return (
-                info,
-                rows,
-                gr.update(choices=file_choices, value=None),
-                gr.update(
-                    choices=version_choices,
-                    value=str(info.get("versionId") or "") or None,
-                ),
-                _pack_media_html(urls, info.get("title")),
-                str(arch or info.get("architecture") or "") or None,
-                note,
-            )
-
-        find_url_btn.click(
-            _find_url_resolve,
-            inputs=[find_url, find_url_arch],
-            outputs=[
-                find_info_state,
-                find_files,
-                find_file_pick,
-                find_version,
-                find_media,
-                find_arch,
-                find_status,
-            ],
-        )
-
-    for line in manifest.get("legal", []):
-        gr.Markdown(f"- {line}")
-
-
 class FinetuneManagerPlugin(WAN2GPPlugin):
     def setup_ui(self):
         self.request_global("refresh_model_defs")
@@ -4479,7 +3135,11 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
         registry = gr.State([])
         gr.Markdown(
             f"**Finetune Manager v{PLUGIN_VERSION}** — "
-            f"[HF Registry](https://huggingface.co/spaces/{REGISTRY_SPACE})"
+            + " · ".join(
+                f"[{('HF Registry' if repo == _REGISTRY_SOURCES[0] else repo)}]"
+                f"(https://huggingface.co/spaces/{repo})"
+                for repo in _REGISTRY_SOURCES
+            )
         )
         if not _REGISTRY_TOKEN_VALID:
             gr.HTML(_TOKEN_SETUP_GUIDE)
@@ -4514,6 +3174,23 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         value="",
                         allow_custom_value=True,
                         scale=1,
+                    )
+                    b_registry = gr.Dropdown(
+                        label="Registry",
+                        choices=[
+                            ("All registries", "all"),
+                            ("Community", "community"),
+                            ("Adult Pack", "adult"),
+                        ],
+                        value="all",
+                        allow_custom_value=False,
+                        scale=1,
+                    )
+                    b_consent = gr.Checkbox(
+                        label="I am 18 or older — show Adult Pack entries",
+                        value=ADULT_CONSENT,
+                        scale=0,
+                        min_width=280,
                     )
                 b_refresh = gr.Button("Refresh Registry")
                 b_count = gr.Markdown("Click *Refresh* to load")
@@ -4561,8 +3238,12 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     })
                     return ["All"] + archs
 
-                def _fmt_cards(fins, search, arch, sel, tag_filter, family="All"):
+                def _fmt_cards(
+                    fins, search, arch, sel, tag_filter, family="All", registry="all",
+                    consent=False,
+                ):
                     ff = list(fins)
+                    gated = not consent
                     if search:
                         s = search.lower()
 
@@ -4584,6 +3265,28 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         ]
                     if family and family != "All":
                         ff = [f for f in ff if f.get("family") == family]
+                    if registry and registry != "all":
+                        want_adult = registry == "adult"
+                        if want_adult and gated:
+                            return (
+                                "<div style='color:#9ca3af;text-align:center;"
+                                "padding:32px'>Tick the consent checkbox above to "
+                                "see Adult Pack entries</div>",
+                                "**Adult Pack locked**",
+                            )
+                        ff = [
+                            f
+                            for f in ff
+                            if str(f.get("registry_source") or "").endswith("-adult")
+                            == want_adult
+                        ]
+                    elif gated:
+                        ff = [
+                            f
+                            for f in ff
+                            if not str(f.get("registry_source") or "")
+                            .endswith("-adult")
+                        ]
                     if arch and arch != "All":
                         ff = [f for f in ff if f.get("architecture") == arch]
                     if tag_filter:
@@ -4609,10 +3312,15 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         )
                     catalog = _family_catalog(self)
                     ff.sort(
-                        key=lambda f: _family_sort_key(
-                            catalog,
-                            f.get("family") or _FAMILY_UNKNOWN,
-                            str(f.get("name", f.get("id", "")) or ""),
+                        key=lambda f: (
+                            1
+                            if str(f.get("registry_source") or "").endswith("-adult")
+                            else 0,
+                            _family_sort_key(
+                                catalog,
+                                f.get("family") or _FAMILY_UNKNOWN,
+                                str(f.get("name", f.get("id", "")) or ""),
+                            ),
                         )
                     )
                     counts = {}
@@ -4645,6 +3353,8 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                 is_selected=(fid == sel),
                                 sel_elem_id="fm-selected",
                                 is_variant=bool(f.get("source")),
+                                is_pack=str(f.get("registry_source") or "")
+                                .endswith("-adult"),
                                 family_label=_family_label(catalog, fam),
                                 family_warning=f.get("family_warning", ""),
                                 security_warning=f.get("security_warning", ""),
@@ -4668,9 +3378,9 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                                     seen.add(t)
                     return sorted(seen)
 
-                def _do_refresh():
+                def _do_refresh(consent):
                     fins = _enrich_registry(_get_cached_registry(force=True))
-                    html, cnt = _fmt_cards(fins, "", "All", "", "")
+                    html, cnt = _fmt_cards(fins, "", "All", "", "", consent=consent)
                     tags = _all_tags(fins)
                     catalog = _family_catalog(self)
                     present = {f.get("family", _FAMILY_UNKNOWN) for f in fins}
@@ -4692,6 +3402,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 b_refresh.click(
                     fn=_do_refresh,
+                    inputs=[b_consent],
                     outputs=[
                         registry,
                         b_sel_id,
@@ -4704,13 +3415,15 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     ],
                 )
 
-                def _filter(fins, search, arch, sel, tag_filter, family):
-                    html, cnt = _fmt_cards(fins, search, arch, sel, tag_filter, family)
+                def _filter(fins, search, arch, sel, tag_filter, family, registry, consent):
+                    html, cnt = _fmt_cards(
+                        fins, search, arch, sel, tag_filter, family, registry, consent
+                    )
                     return html, cnt
 
-                def _family_changed(fins, search, sel, tag_filter, family):
+                def _family_changed(fins, search, sel, tag_filter, family, registry, consent):
                     html, cnt = _fmt_cards(
-                        fins, search, "All", sel, tag_filter, family
+                        fins, search, "All", sel, tag_filter, family, registry, consent
                     )
                     return (
                         html,
@@ -4720,22 +3433,95 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
 
                 b_search.input(
                     fn=_filter,
-                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter, b_family],
+                    inputs=[
+                        registry,
+                        b_search,
+                        b_arch,
+                        b_sel_id,
+                        b_tag_filter,
+                        b_family,
+                        b_registry,
+                        b_consent,
+                    ],
                     outputs=[b_cards, b_count],
                 )
                 b_arch.change(
                     fn=_filter,
-                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter, b_family],
+                    inputs=[
+                        registry,
+                        b_search,
+                        b_arch,
+                        b_sel_id,
+                        b_tag_filter,
+                        b_family,
+                        b_registry,
+                        b_consent,
+                    ],
                     outputs=[b_cards, b_count],
                 )
                 b_tag_filter.change(
                     fn=_filter,
-                    inputs=[registry, b_search, b_arch, b_sel_id, b_tag_filter, b_family],
+                    inputs=[
+                        registry,
+                        b_search,
+                        b_arch,
+                        b_sel_id,
+                        b_tag_filter,
+                        b_family,
+                        b_registry,
+                        b_consent,
+                    ],
+                    outputs=[b_cards, b_count],
+                )
+                b_registry.change(
+                    fn=_filter,
+                    inputs=[
+                        registry,
+                        b_search,
+                        b_arch,
+                        b_sel_id,
+                        b_tag_filter,
+                        b_family,
+                        b_registry,
+                        b_consent,
+                    ],
+                    outputs=[b_cards, b_count],
+                )
+
+                def _consent_changed(
+                    fins, search, arch, sel, tag_filter, family, registry, consent
+                ):
+                    _persist_config("adult_consent", bool(consent))
+                    html, cnt = _fmt_cards(
+                        fins, search, arch, sel, tag_filter, family, registry, consent
+                    )
+                    return html, cnt
+
+                b_consent.change(
+                    fn=_consent_changed,
+                    inputs=[
+                        registry,
+                        b_search,
+                        b_arch,
+                        b_sel_id,
+                        b_tag_filter,
+                        b_family,
+                        b_registry,
+                        b_consent,
+                    ],
                     outputs=[b_cards, b_count],
                 )
                 b_family.change(
                     fn=_family_changed,
-                    inputs=[registry, b_search, b_sel_id, b_tag_filter, b_family],
+                    inputs=[
+                        registry,
+                        b_search,
+                        b_sel_id,
+                        b_tag_filter,
+                        b_family,
+                        b_registry,
+                        b_consent,
+                    ],
                     outputs=[b_cards, b_count, b_arch],
                 )
 
@@ -4798,7 +3584,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if not m:
                         return f"'{fid}' not found", gr.update(), gr.update()
                     try:
-                        data = _fetch_registry_json(fid)
+                        data = _fetch_registry_json(fid, m.get("registry_source"))
                     except Exception as e:
                         return f"Error: {e}", gr.update(), gr.update()
                     err = _validate_finetune_data(data, registry=True)
@@ -4824,7 +3610,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                     if not m:
                         return f"'{fid}' not found"
                     try:
-                        data = _fetch_registry_json(fid)
+                        data = _fetch_registry_json(fid, m.get("registry_source"))
                     except Exception as e:
                         return f"Error: {e}"
                     err = _validate_finetune_data(data, registry=True)
@@ -4851,7 +3637,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             {},
                         ]
                     try:
-                        data = _fetch_registry_json(fid)
+                        data = _fetch_registry_json(fid, m.get("registry_source"))
                     except Exception as e:
                         return [gr.update()] * (len(ALL_INPUTS)) + [gr.update(), f"Error: {e}", {}]
                     err = _validate_finetune_data(data, registry=True)
@@ -4880,10 +3666,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         f"Variant '{vid}' loaded into Create/Edit tab",
                         data,
                     ]
-
-            # ── PACK ──
-            with gr.TabItem("Pack", id="pack"):
-                _build_pack_tab(self)
 
             # ── CREATE / EDIT ──
             with gr.TabItem("Create / Edit", id="editor"):
@@ -5880,13 +4662,13 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                             "Replace those URLs with non-token download links first."
                         )
                     try:
-                        _hf_upload(safe_id, data, self)
+                        target = _hf_upload(safe_id, data, self)
                         if (
                             hasattr(self, "refresh_model_defs")
                             and self.refresh_model_defs
                         ):
                             self.refresh_model_defs()
-                        return f"Saved & uploaded {safe_id}"
+                        return f"Saved & uploaded {safe_id} → {target}"
                     except Exception as e:
                         return f"Saved but upload failed: {e}"
 
@@ -6195,6 +4977,663 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         outputs=[tb, ref, val_html],
                     )
 
+                with gr.Accordion("Search models — fill into editor (CivitAI / Hugging Face)", open=False):
+                    gr.Markdown(
+                        "Search **CivitAI** or **Hugging Face** — sort by "
+                        "trending, downloads, likes or recency — then **fill the "
+                        "editor fields** or **create a finetune.json** recipe "
+                        "(token-free URLs; Wan2GP fetches the weights when the "
+                        "finetune is loaded). CivitAI's **Site** picks "
+                        "`civitai.com` or its adult front-end `civitai.red`; "
+                        "mature models need *Include NSFW*."
+                    )
+                    with gr.Row():
+                        ci_search = gr.Textbox(
+                            label="Search",
+                            scale=3,
+                            container=False,
+                            placeholder="e.g. fantasy landscape, character style, author/repo...",
+                        )
+                        ci_sort = gr.Dropdown(
+                            label="Sort by",
+                            choices=list(_CIVITAI_SORTS),
+                            value="Most downloads",
+                            scale=1,
+                            min_width=140,
+                        )
+                        ci_engine = gr.Dropdown(
+                            label="Source",
+                            choices=["CivitAI", "Hugging Face"],
+                            value="CivitAI",
+                            scale=1,
+                            min_width=130,
+                        )
+                        ci_search_btn = gr.Button("Search", variant="primary", scale=1)
+                    with gr.Row():
+                        ci_type = gr.Dropdown(
+                            label="Type",
+                            choices=_civitai_enum_choices("ModelType"),
+                            value="All",
+                            allow_custom_value=True,
+                            scale=1,
+                        )
+                        ci_base = gr.Dropdown(
+                            label="Base Model",
+                            choices=_civitai_enum_choices("BaseModel"),
+                            filterable=True,
+                            value="All",
+                            allow_custom_value=True,
+                            scale=1,
+                        )
+                        ci_site = gr.Dropdown(
+                            label="Site",
+                            choices=list(CIVITAI_SITES),
+                            value=CIVITAI_SITE_DEFAULT,
+                            scale=1,
+                            min_width=120,
+                        )
+                        ci_nsfw = gr.Checkbox(
+                            label="Include NSFW",
+                            value=CIVITAI_NSFW_DEFAULT,
+                            scale=0,
+                            min_width=120,
+                        )
+                    with gr.Row():
+                        ci_pick = gr.Dropdown(
+                            label="Result version",
+                            choices=[],
+                            value=None,
+                            interactive=True,
+                            allow_custom_value=True,
+                            scale=3,
+                            container=False,
+                        )
+                        ci_load_btn = gr.Button(
+                            "Fill into editor", variant="primary", scale=1
+                        )
+                        ci_clear_btn = gr.Button("Clear", scale=1)
+                    with gr.Row(visible=False) as hf_files_row:
+                        hf_files = gr.Dropdown(
+                            label="Weight files (Hugging Face)",
+                            choices=[],
+                            value=None,
+                            interactive=True,
+                            multiselect=True,
+                            allow_custom_value=False,
+                            scale=3,
+                            container=False,
+                        )
+                        hf_kind = gr.Dropdown(
+                            label="Add as",
+                            choices=["Auto", "Checkpoint", "LoRA"],
+                            value="Auto",
+                            scale=1,
+                            min_width=120,
+                            filterable=False,
+                        )
+                    hf_payload_store = gr.State({})
+                    with gr.Row():
+                        ci_arch = gr.Dropdown(
+                            label="Target architecture (LoRA folder / recipe model)",
+                            choices=_architecture_choices(self),
+                            filterable=True,
+                            allow_custom_value=True,
+                            scale=3,
+                        )
+                        ci_all_files = gr.Checkbox(
+                            label="All weight files (CivitAI only)",
+                            value=False,
+                            scale=1,
+                            min_width=170,
+                        )
+                        ci_recipe_btn = gr.Button("Create finetune.json", scale=1)
+                    ci_status = gr.Markdown(
+                        "Enter a search term to find models on CivitAI"
+                    )
+                    ci_action_status = gr.Markdown("")
+                    ci_results = gr.HTML(
+                        "<div style='color:#9ca3af;text-align:center;"
+                        "padding:32px'>Click Search</div>"
+                    )
+
+                    def _engine_changed(engine):
+                        """Switch the row between the two engines."""
+                        is_ci = engine != "Hugging Face"
+                        return (
+                            gr.update(visible=is_ci),  # ci_type
+                            gr.update(visible=is_ci),  # ci_base
+                            gr.update(visible=is_ci),  # ci_site
+                            (
+                                gr.update(visible=True, label="Include NSFW")
+                                if is_ci
+                                else gr.update(
+                                    visible=True, label="Adult-flagged only"
+                                )
+                            ),  # ci_nsfw
+                            gr.update(visible=False),  # hf_files_row
+                            (
+                                "Enter a search term to find models on CivitAI"
+                                if is_ci
+                                else "Empty search lists Hub-wide trending"
+                            ),
+                            "<div style='color:#9ca3af;text-align:center;"
+                            "padding:32px'>Click Search</div>",
+                            gr.update(choices=[], value=None),  # ci_pick
+                        )
+
+                    ci_engine.change(
+                        fn=_engine_changed,
+                        inputs=[ci_engine],
+                        outputs=[
+                            ci_type,
+                            ci_base,
+                            ci_site,
+                            ci_nsfw,
+                            hf_files_row,
+                            ci_status,
+                            ci_results,
+                            ci_pick,
+                        ],
+                    )
+
+                    def _pick_changed(civitai_json_str, engine):
+                        """CivitAI payloads need nothing; HF selections stream the
+                        repo's weight files into their dropdown plus a payload
+                        store the fill/recipe handlers share."""
+                        if engine != "Hugging Face":
+                            return gr.update(), gr.update(), ""
+                        sel = _hf_selection(civitai_json_str)
+                        if sel is None:
+                            return gr.update(), gr.update(), "Select a result first."
+                        try:
+                            files = _hf_model_files(sel["repo"])
+                        except Exception as exc:  # noqa: BLE001 - status text
+                            return (
+                                gr.update(),
+                                gr.update(choices=[], value=None),
+                                f"Error: {exc}",
+                            )
+                        if not files:
+                            return (
+                                gr.update(),
+                                gr.update(choices=[], value=None),
+                                f"`{sel['repo']}` has no weight files "
+                                "(.safetensors/.gguf/.pth/.ckpt).",
+                            )
+                        payload = dict(sel)
+                        payload["files"] = files
+                        opts = [
+                            (
+                                f"{f['name'].rsplit('/', 1)[-1]}"
+                                f" ({_hf_human_size(f['size'])})",
+                                f["name"],
+                            )
+                            for f in files
+                        ]
+                        return (
+                            payload,
+                            gr.update(choices=opts, value=None),
+                            f"**{len(files)} weight file(s)** in `{sel['repo']}` "
+                            "— pick one or a HIGH/LOW pair, then Fill.",
+                        )
+
+                    ci_pick.change(
+                        fn=_pick_changed,
+                        inputs=[ci_pick, ci_engine],
+                        outputs=[hf_payload_store, hf_files, ci_status],
+                    )
+
+                    def _ci_target_arch(arch, state_value):
+                        """Resolve the target architecture: explicit choice, then the
+                        current Wan2GP model, then Wan2GP's first installed model."""
+                        value = str(arch or "").strip() or _state_model_type(state_value)
+                        if value:
+                            return value
+                        choices = _architecture_choices(self)
+                        return str(choices[0][1]) if choices else ""
+
+                    def _ci_hint(exc) -> str:
+                        text = str(exc).lower()
+                        if any(
+                            marker in text
+                            for marker in (
+                                "text/html",
+                                "401",
+                                "403",
+                                "unauthorized",
+                                "forbidden",
+                                "login",
+                            )
+                        ):
+                            return (
+                                "\n\nCivitAI gates this file. Add `civitai_api_key` to "
+                                f"`{_cfg_path}` or download it manually from the site."
+                            )
+                        return ""
+
+
+                    def _ci_do_search(
+                        query, mtype, base, nsfw, site, engine, sort
+                    ):
+                        query = (query or "").strip()
+                        sort = sort if sort in _CIVITAI_SORTS else "Most downloads"
+                        if engine == "Hugging Face":
+                            if not query:
+                                pass  # empty query = Hub-wide trending browse
+                            try:
+                                data = _hf_search(
+                                    query,
+                                    sort=sort,
+                                    adult_only=bool(nsfw),
+                                    limit=24,
+                                )
+                            except Exception as exc:  # noqa: BLE001 - status text
+                                return (
+                                    "<div style='color:#dc2626;padding:16px'>"
+                                    f"Error: {html.escape(str(exc))}</div>",
+                                    f"Error: {html.escape(str(exc))}",
+                                    gr.update(choices=[], value=None),
+                                    gr.update(),
+                                    gr.update(),
+                                )
+                            items = data["items"]
+                            html_out = _hf_render_results(items)
+                            options = _hf_result_options(items)
+                            label = (
+                                f"'{html.escape(query)}'" if query else "Hub-wide trending"
+                            )
+                            status = (
+                                f"**{len(options)} results** for {label} "
+                                f"({sort.lower()})"
+                            )
+                            if bool(nsfw):
+                                status += " · adult-flagged only"
+                            return (
+                                html_out,
+                                status,
+                                gr.update(choices=options, value=None),
+                                gr.update(),
+                                gr.update(),
+                            )
+                        site = _civitai_site(site)
+                        filtered = mtype not in ("", "All", None) or base not in ("", "All", None)
+                        _civitai_prefetch_enums()
+                        enum_updates = _civitai_enum_updates(mtype, base)
+                        if not query and not filtered:
+                            return (
+                                "<div style='color:#9ca3af;"
+                                "text-align:center;padding:32px'>"
+                                "Enter a search term or pick a Type / Base Model</div>",
+                                "Enter a search term or pick a Type / Base Model",
+                                gr.update(choices=[], value=None),
+                            ) + tuple(enum_updates)
+                        data = _civitai_search(
+                            query,
+                            model_type=mtype,
+                            base_model=base,
+                            nsfw=bool(nsfw),
+                            site=site,
+                            sort=_CIVITAI_SORTS.get(sort, "Most Downloaded"),
+                        )
+                        html_out = _civitai_render_results(data)
+                        options = _civitai_result_options(data, site)
+                        count = len(data.get("items", [])) if "error" not in data else 0
+                        label = f"'{html.escape(query)}'" if query else _CIVITAI_SORTS.get(sort, sort)
+                        status = (
+                            f"**{count} results** for {label} ({sort.lower()})"
+                            if count
+                            else f"No results found: {html.escape(data['error'])}"
+                            if "error" in data
+                            else "No results found"
+                        )
+                        if count and (site != "civitai.com" or nsfw):
+                            status += f" · {site}" + (" · NSFW included" if nsfw else "")
+                        return (
+                            html_out,
+                            status,
+                            gr.update(choices=options, value=None),
+                        ) + tuple(enum_updates)
+
+                    ci_search_btn.click(
+                        fn=_ci_do_search,
+                        inputs=[
+                            ci_search,
+                            ci_type,
+                            ci_base,
+                            ci_nsfw,
+                            ci_site,
+                            ci_engine,
+                            ci_sort,
+                        ],
+                        outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
+                    )
+                    ci_search.submit(
+                        fn=_ci_do_search,
+                        inputs=[
+                            ci_search,
+                            ci_type,
+                            ci_base,
+                            ci_nsfw,
+                            ci_site,
+                            ci_engine,
+                            ci_sort,
+                        ],
+                        outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
+                    )
+
+                    def _ci_fill(
+                        engine,
+                        civitai_json_str,
+                        hf_store,
+                        hf_files_sel,
+                        hf_kind_sel,
+                        arch,
+                        current_name,
+                        current_desc,
+                        current_tags,
+                        current_loras,
+                        current_mults,
+                    ):
+                        if engine == "Hugging Face":
+                            return _hf_fill_updates(
+                                hf_store,
+                                hf_files_sel,
+                                arch=arch,
+                                current_name=current_name,
+                                current_desc=current_desc,
+                                current_tags=current_tags,
+                                current_loras=current_loras,
+                                current_loras_multipliers=current_mults,
+                                force_kind=hf_kind_sel or "Auto",
+                            )
+                        return _civitai_extract_fill_data(
+                            civitai_json_str,
+                            arch=arch,
+                            current_name=current_name,
+                            current_desc=current_desc,
+                            current_tags=current_tags,
+                            current_loras=current_loras,
+                            current_loras_multipliers=current_mults,
+                        )
+
+                    ci_load_btn.click(
+                        fn=_ci_fill,
+                        inputs=[
+                            ci_engine,
+                            ci_pick,
+                            hf_payload_store,
+                            hf_files,
+                            hf_kind,
+                            ci_arch,
+                            fin_name,
+                            fin_desc,
+                            fin_tags,
+                            fin_loras,
+                            fin_lmults,
+                        ],
+                        outputs=ALL_INPUTS[1:] + [ci_action_status],
+                    ).then(
+                        fn=_sync_refs_from_loaded,
+                        inputs=_URL_INPUTS,
+                        outputs=_URL_REFS + _URL_VALS,
+                    ).then(
+                        fn=_split_to_rows,
+                        inputs=[fin_loras, fin_lmults],
+                        outputs=fin_lora_urls
+                        + fin_lora_mults
+                        + fin_lora_refs
+                        + fin_lora_vals,
+                    )
+
+
+                    def _ci_create_recipe(
+                        state_value,
+                        engine,
+                        civitai_json_str,
+                        hf_store,
+                        hf_files_sel,
+                        hf_kind_sel,
+                        arch,
+                        all_files,
+                    ):
+                        arch_used = _ci_target_arch(arch, state_value)
+                        if not arch_used:
+                            return (
+                                "Choose a target architecture for the recipe.",
+                                gr.update(),
+                            )
+                        if engine == "Hugging Face":
+                            if not hf_store.get("repo") or not hf_files_sel:
+                                return (
+                                    "Pick a Hugging Face result and its weight "
+                                    "files first.",
+                                    gr.update(),
+                                )
+                            try:
+                                data = _hf_recipe_payload(
+                                    hf_store,
+                                    hf_files_sel,
+                                    architecture=arch_used,
+                                    force_kind=hf_kind_sel or "Auto",
+                                )
+                            except Exception as exc:  # noqa: BLE001 - status text
+                                return (
+                                    f"**Cannot create recipe:** {exc}",
+                                    gr.update(value=arch_used or None),
+                                )
+                            safe_id = _unique_id(
+                                _sanitize_fin_id(
+                                    f"hf_{hf_store['repo'].replace('/', '_')}"
+                                )
+                            )
+                            _write_finetune(safe_id, data)
+                            _refresh_model_defs(self)
+                            url_count = len(data["model"].get("URLs", [])) + len(
+                                data["model"].get("URLs2", [])
+                            ) + len(data["model"].get("loras", []))
+                            filename = Path(FINETUNES_DIR) / f"{safe_id}.json"
+                            return (
+                                f"**Created `{filename}`** with {url_count} "
+                                "download URL(s). Wan2GP fetches the weights "
+                                "when this finetune is loaded and saves each "
+                                "under its real filename.",
+                                gr.update(value=arch_used),
+                            )
+                        sel = _civitai_selection(civitai_json_str)
+                        if sel is None:
+                            return (
+                                "Select a result version first, then press "
+                                "*Create finetune.json*.",
+                                gr.update(),
+                            )
+                        try:
+                            data = fm_pack.civitai_recipe(
+                                sel["model"],
+                                sel["version"],
+                                architecture=arch_used,
+                                primary_only=not bool(all_files),
+                                site=sel["site"],
+                            )
+                        except Exception as exc:  # noqa: BLE001 - shown in status
+                            return (
+                                f"**Cannot create recipe:** {exc}",
+                                gr.update(value=arch_used or None),
+                            )
+                        safe_id = _unique_id(_civitai_recipe_id(sel))
+                        _write_finetune(safe_id, data)
+                        _refresh_model_defs(self)
+                        url_count = len(
+                            fm_pack.civitai_download_urls(
+                                sel["version"],
+                                site=sel["site"],
+                                primary_only=not bool(all_files),
+                            )
+                        )
+                        filename = Path(FINETUNES_DIR) / f"{safe_id}.json"
+                        return (
+                            f"**Created `{filename}`** with {url_count} download "
+                            "URL(s). Wan2GP fetches the weights when this finetune "
+                            "is loaded and saves each under its real filename. The "
+                            "recipe stores the public URL only.",
+                            gr.update(value=arch_used),
+                        )
+
+                    ci_recipe_btn.click(
+                        fn=_ci_create_recipe,
+                        inputs=[
+                            self.state,
+                            ci_engine,
+                            ci_pick,
+                            hf_payload_store,
+                            hf_files,
+                            hf_kind,
+                            ci_arch,
+                            ci_all_files,
+                        ],
+                        outputs=[ci_action_status, ci_arch],
+                    )
+
+                    def _ci_clear(engine):
+                        return (
+                            gr.update(visible=engine != "Hugging Face"),
+                            "<div style='color:#9ca3af;text-align:center;"
+                            "padding:32px'>Click Search</div>",
+                            gr.update(choices=[], value=None),
+                            {},
+                            gr.update(choices=[], value=None),
+                            "Enter a search term to find models",
+                            "",
+                        )
+
+                    ci_clear_btn.click(
+                        fn=_ci_clear,
+                        inputs=[ci_engine],
+                        outputs=[
+                            hf_files_row,
+                            ci_results,
+                            ci_pick,
+                            hf_payload_store,
+                            hf_files,
+                            ci_status,
+                            ci_action_status,
+                        ],
+                    )
+
+                with gr.Accordion("Fill from Hugging Face", open=False):
+                    gr.Markdown(
+                        "Paste an HF model URL or `author/repo` id, list its weight "
+                        "files, then fill the editor URLs and name."
+                    )
+                    with gr.Row():
+                        hf_repo_box = gr.Textbox(
+                            label="HF model",
+                            scale=3,
+                            container=False,
+                            placeholder="https://huggingface.co/author/repo  or  author/repo",
+                        )
+                        hf_list_btn = gr.Button("List files", scale=0)
+                    with gr.Row():
+                        hf_files_dd = gr.Dropdown(
+                            label="Weight file(s)",
+                            choices=[],
+                            value=None,
+                            multiselect=True,
+                            interactive=True,
+                            allow_custom_value=True,
+                            scale=3,
+                        )
+                        hf_apply_btn = gr.Button("Fill into editor", scale=1)
+                    hf_status = gr.Markdown("")
+
+                    def _hf_repo_id(text):
+                        t = str(text or "").strip()
+                        m = _re.search(
+                            r"(?:huggingface\.co|hf\.co)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+                            t,
+                        )
+                        if m:
+                            return m.group(1).rstrip("/#").removesuffix("/blob").removesuffix("/tree")
+                        if _re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", t):
+                            return t
+                        return ""
+
+                    def _hf_list(repo_text):
+                        repo = _hf_repo_id(repo_text)
+                        if not repo:
+                            return (
+                                gr.update(choices=[], value=None),
+                                "Enter an HF model URL or `author/repo` id.",
+                            )
+                        try:
+                            from huggingface_hub import HfApi
+                            api = HfApi(token=REGISTRY_TOKEN) if _REGISTRY_TOKEN_VALID else HfApi()
+                            info = api.model_info(repo, files_metadata=True)
+                            weights = [
+                                s.rfilename
+                                for s in (info.siblings or [])
+                                if str(s.rfilename).lower().endswith(
+                                    (".safetensors", ".gguf", ".pth", ".ckpt")
+                                )
+                            ]
+                            if not weights:
+                                return (
+                                    gr.update(choices=[], value=None),
+                                    f"`{repo}` has no weight files (.safetensors/.gguf/.pth/.ckpt).",
+                                )
+                            options = [(f, f) for f in weights]
+                            return (
+                                gr.update(choices=options, value=None),
+                                f"**{len(weights)} weight file(s)** in `{repo}` — pick one or a HIGH/LOW pair.",
+                            )
+                        except Exception as exc:
+                            return gr.update(choices=[], value=None), f"Error: {exc}"
+
+                    hf_list_btn.click(
+                        fn=_hf_list,
+                        inputs=[hf_repo_box],
+                        outputs=[hf_files_dd, hf_status],
+                    )
+                    hf_repo_box.submit(
+                        fn=_hf_list,
+                        inputs=[hf_repo_box],
+                        outputs=[hf_files_dd, hf_status],
+                    )
+
+                    def _hf_apply(repo_text, files, current_name):
+                        repo = _hf_repo_id(repo_text)
+                        picked = [str(f).strip() for f in (files or []) if str(f).strip()]
+                        if not repo or not picked:
+                            return (
+                                gr.update(),
+                                gr.update(),
+                                "List files and pick at least one weight file first.",
+                            )
+                        urls = "\n".join(
+                            f"https://huggingface.co/{repo}/resolve/main/{f}"
+                            for f in picked
+                        )
+                        last = picked[-1].rsplit("/", 1)[-1]
+                        name = (
+                            gr.update(value=last)
+                            if not str(current_name or "").strip()
+                            else gr.update()
+                        )
+                        return (
+                            gr.update(value=urls),
+                            name,
+                            f"Filled {len(picked)} URL(s) from `{repo}`.",
+                        )
+
+                    hf_apply_btn.click(
+                        fn=_hf_apply,
+                        inputs=[hf_repo_box, hf_files_dd, fin_name],
+                        outputs=[fin_urls, fin_name, hf_status],
+                    ).then(
+                        fn=_sync_refs_from_loaded,
+                        inputs=_URL_INPUTS,
+                        outputs=_URL_REFS + _URL_VALS,
+                    )
+
             # ── LOCAL ──
             with gr.TabItem("Local", id="local"):
                 with gr.Row():
@@ -6242,372 +5681,6 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                 l_status = gr.Textbox(label="Status")
 
             # ── CIVITAI ──
-            with gr.TabItem("CivitAI", id="civitai") as ci_tab:
-                gr.Markdown(
-                    "Search CivitAI, then **fill Create/Edit**, **download** the "
-                    "weights into the folder Wan2GP scans, or **create a "
-                    "finetune.json** recipe that downloads them later. "
-                    "**Site** picks the host: `civitai.com` or its adult front-end "
-                    "`civitai.red` (same catalogue; mature models need *Include NSFW* "
-                    "on either one)."
-                )
-                with gr.Row():
-                    ci_search = gr.Textbox(
-                        label="Search",
-                        scale=3,
-                        container=False,
-                        placeholder="e.g. fantasy landscape, character style...",
-                    )
-                    ci_type = gr.Dropdown(
-                        label="Type",
-                        choices=_civitai_enum_choices("ModelType"),
-                        value="All",
-                        allow_custom_value=True,
-                        scale=1,
-                    )
-                    ci_base = gr.Dropdown(
-                        label="Base Model",
-                        choices=_civitai_enum_choices("BaseModel"),
-                        filterable=True,
-                        value="All",
-                        allow_custom_value=True,
-                        scale=1,
-                    )
-                    ci_site = gr.Dropdown(
-                        label="Site",
-                        choices=list(CIVITAI_SITES),
-                        value=CIVITAI_SITE_DEFAULT,
-                        scale=1,
-                        min_width=120,
-                    )
-                    ci_nsfw = gr.Checkbox(
-                        label="Include NSFW",
-                        value=CIVITAI_NSFW_DEFAULT,
-                        scale=0,
-                        min_width=120,
-                    )
-                    ci_search_btn = gr.Button("Search", variant="primary", scale=1)
-                with gr.Row():
-                    ci_pick = gr.Dropdown(
-                        label="Result version",
-                        choices=[],
-                        value=None,
-                        interactive=True,
-                        allow_custom_value=True,
-                        scale=3,
-                        container=False,
-                    )
-                    ci_load_btn = gr.Button(
-                        "Fill Selected into Create/Edit", variant="primary", scale=1
-                    )
-                    ci_clear_btn = gr.Button("Clear", scale=1)
-                with gr.Row():
-                    ci_arch = gr.Dropdown(
-                        label="Target architecture (LoRA folder / recipe model)",
-                        choices=_architecture_choices(self),
-                        filterable=True,
-                        allow_custom_value=True,
-                        scale=3,
-                    )
-                    ci_all_files = gr.Checkbox(
-                        label="All weight files",
-                        value=False,
-                        scale=1,
-                        min_width=140,
-                    )
-                    ci_download_btn = gr.Button(
-                        "Download selected", variant="primary", scale=1
-                    )
-                    ci_recipe_btn = gr.Button("Create finetune.json", scale=1)
-                ci_status = gr.Markdown("Enter a search term to find models on CivitAI")
-                ci_action_status = gr.Markdown("")
-                ci_results = gr.HTML(
-                    "<div style='color:#9ca3af;text-align:center;"
-                    "padding:32px'>Click Search</div>"
-                )
-
-                def _ci_target_arch(arch, state_value):
-                    """Resolve the target architecture: explicit choice, then the
-                    current Wan2GP model, then Wan2GP's first installed model."""
-                    value = str(arch or "").strip() or _state_model_type(state_value)
-                    if value:
-                        return value
-                    choices = _architecture_choices(self)
-                    return str(choices[0][1]) if choices else ""
-
-                def _ci_hint(exc) -> str:
-                    text = str(exc).lower()
-                    if any(
-                        marker in text
-                        for marker in (
-                            "text/html",
-                            "401",
-                            "403",
-                            "unauthorized",
-                            "forbidden",
-                            "login",
-                        )
-                    ):
-                        return (
-                            "\n\nCivitAI gates this file. Add `civitai_api_key` to "
-                            f"`{_cfg_path}` or download it manually from the site."
-                        )
-                    return ""
-
-
-                def _ci_refresh_filters(mtype, base):
-                    """Upgrade the filters to CivitAI's live enum values when the tab is
-                    opened. The UI is built from the built-in list, and the fetch runs on
-                    a background thread, so nothing here waits on the network."""
-                    _civitai_prefetch_enums()
-                    return _civitai_enum_updates(mtype, base)
-
-                ci_tab.select(
-                    fn=_ci_refresh_filters,
-                    inputs=[ci_type, ci_base],
-                    outputs=[ci_type, ci_base],
-                )
-
-                def _ci_do_search(query, mtype, base, nsfw=False, site="civitai.com"):
-                    query = (query or "").strip()
-                    site = _civitai_site(site)
-                    filtered = mtype not in ("", "All", None) or base not in ("", "All", None)
-                    _civitai_prefetch_enums()
-                    enum_updates = _civitai_enum_updates(mtype, base)
-                    if not query and not filtered:
-                        return (
-                            "<div style='color:#9ca3af;"
-                            "text-align:center;padding:32px'>"
-                            "Enter a search term or pick a Type / Base Model</div>",
-                            "Enter a search term or pick a Type / Base Model",
-                            gr.update(choices=[], value=None),
-                        ) + tuple(enum_updates)
-                    data = _civitai_search(
-                        query, model_type=mtype, base_model=base, nsfw=bool(nsfw), site=site
-                    )
-                    html_out = _civitai_render_results(data)
-                    options = _civitai_result_options(data, site)
-                    count = len(data.get("items", [])) if "error" not in data else 0
-                    label = f"'{html.escape(query)}'" if query else "most downloaded"
-                    status = (
-                        f"**{count} results** for {label}"
-                        if count
-                        else f"No results found: {html.escape(data['error'])}"
-                        if "error" in data
-                        else "No results found"
-                    )
-                    if count and (site != "civitai.com" or nsfw):
-                        status += f" · {site}" + (" · NSFW included" if nsfw else "")
-                    return (
-                        html_out,
-                        status,
-                        gr.update(choices=options, value=None),
-                    ) + tuple(enum_updates)
-
-                ci_search_btn.click(
-                    fn=_ci_do_search,
-                    inputs=[ci_search, ci_type, ci_base, ci_nsfw, ci_site],
-                    outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
-                )
-                ci_search.submit(
-                    fn=_ci_do_search,
-                    inputs=[ci_search, ci_type, ci_base, ci_nsfw, ci_site],
-                    outputs=[ci_results, ci_status, ci_pick, ci_type, ci_base],
-                )
-
-                def _ci_fill(
-                    civitai_json_str,
-                    arch,
-                    current_name,
-                    current_desc,
-                    current_tags,
-                    current_loras,
-                    current_mults,
-                ):
-                    return _civitai_extract_fill_data(
-                        civitai_json_str,
-                        arch=arch,
-                        current_name=current_name,
-                        current_desc=current_desc,
-                        current_tags=current_tags,
-                        current_loras=current_loras,
-                        current_loras_multipliers=current_mults,
-                    )
-
-                ci_load_btn.click(
-                    fn=_ci_fill,
-                    inputs=[
-                        ci_pick,
-                        ci_arch,
-                        fin_name,
-                        fin_desc,
-                        fin_tags,
-                        fin_loras,
-                        fin_lmults,
-                    ],
-                    outputs=ALL_INPUTS[1:] + [ci_action_status],
-                ).then(
-                    fn=_sync_refs_from_loaded,
-                    inputs=_URL_INPUTS,
-                    outputs=_URL_REFS + _URL_VALS,
-                ).then(
-                    fn=_split_to_rows,
-                    inputs=[fin_loras, fin_lmults],
-                    outputs=fin_lora_urls
-                    + fin_lora_mults
-                    + fin_lora_refs
-                    + fin_lora_vals,
-                )
-
-                def _ci_download(
-                    state_value,
-                    civitai_json_str,
-                    arch,
-                    all_files,
-                    progress=gr.Progress(),
-                ):
-                    sel = _civitai_selection(civitai_json_str)
-                    if sel is None:
-                        return (
-                            "Select a result version first, then press "
-                            "*Download selected*.",
-                            gr.update(),
-                        )
-                    kind = fm_pack.civitai_kind(sel["model"].get("type"))
-                    if kind is None:
-                        return (
-                            f"CivitAI type "
-                            f"'{sel['model'].get('type') or 'unknown'}' is not a "
-                            "checkpoint or LoRA.",
-                            gr.update(),
-                        )
-                    arch_used = _ci_target_arch(arch, state_value)
-                    if kind == "lora" and not arch_used:
-                        return (
-                            "Choose a target architecture so the LoRA lands in "
-                            "the folder Wan2GP scans.",
-                            gr.update(),
-                        )
-                    dest = (
-                        _lora_dir_for(arch_used, self)
-                        if kind == "lora"
-                        else _ckpts_dir()
-                    )
-                    label = _civitai_selection_name(sel)
-                    try:
-                        result = fm_pack.install_civitai_version(
-                            sel["version"],
-                            dest,
-                            site=sel["site"],
-                            token=CIVITAI_API_KEY,
-                            primary_only=not bool(all_files),
-                            label=label,
-                            progress=lambda n, t, text: progress(
-                                (n, t or n), desc=text
-                            ),
-                        )
-                    except Exception as exc:  # noqa: BLE001 - shown in status
-                        return (
-                            f"**Download failed:** {exc}{_ci_hint(exc)}",
-                            gr.update(value=arch_used or None),
-                        )
-                    DISK_EXISTS_CACHE.clear()
-                    _refresh_model_defs(self)
-                    lines = []
-                    if result["files"]:
-                        lines.append(
-                            f"**Saved {len(result['files'])} file(s) to "
-                            f"`{result['dir']}`**"
-                        )
-                        lines.extend(f"- `{name}`" for name in result["files"])
-                    if result["errors"]:
-                        if lines:
-                            lines.append("")
-                        lines.append("**Failed:**")
-                        lines.extend(
-                            f"- {error}{_ci_hint(error)}"
-                            for error in result["errors"]
-                        )
-                    if not lines:
-                        lines.append("Nothing was downloaded.")
-                    return "\n".join(lines), gr.update(value=arch_used or None)
-
-                ci_download_btn.click(
-                    fn=_ci_download,
-                    inputs=[self.state, ci_pick, ci_arch, ci_all_files],
-                    outputs=[ci_action_status, ci_arch],
-                    show_progress="full",
-                )
-
-                def _ci_create_recipe(
-                    state_value, civitai_json_str, arch, all_files
-                ):
-                    sel = _civitai_selection(civitai_json_str)
-                    if sel is None:
-                        return (
-                            "Select a result version first, then press "
-                            "*Create finetune.json*.",
-                            gr.update(),
-                        )
-                    arch_used = _ci_target_arch(arch, state_value)
-                    if not arch_used:
-                        return (
-                            "Choose a target architecture for the recipe.",
-                            gr.update(),
-                        )
-                    try:
-                        data = fm_pack.civitai_recipe(
-                            sel["model"],
-                            sel["version"],
-                            architecture=arch_used,
-                            primary_only=not bool(all_files),
-                            site=sel["site"],
-                        )
-                    except Exception as exc:  # noqa: BLE001 - shown in status
-                        return (
-                            f"**Cannot create recipe:** {exc}",
-                            gr.update(value=arch_used or None),
-                        )
-                    safe_id = _unique_id(_civitai_recipe_id(sel))
-                    _write_finetune(safe_id, data)
-                    _refresh_model_defs(self)
-                    url_count = len(
-                        fm_pack.civitai_download_urls(
-                            sel["version"],
-                            site=sel["site"],
-                            primary_only=not bool(all_files),
-                        )
-                    )
-                    filename = Path(FINETUNES_DIR) / f"{safe_id}.json"
-                    return (
-                        f"**Created `{filename}`** with {url_count} download "
-                        "URL(s). Wan2GP fetches the weights when this finetune "
-                        "is loaded and saves each under its real filename. The "
-                        "recipe stores the public URL only; use *Download "
-                        "selected* to fetch gated files with your API key.",
-                        gr.update(value=arch_used),
-                    )
-
-                ci_recipe_btn.click(
-                    fn=_ci_create_recipe,
-                    inputs=[self.state, ci_pick, ci_arch, ci_all_files],
-                    outputs=[ci_action_status, ci_arch],
-                )
-
-                def _ci_clear():
-                    return (
-                        "<div style='color:#9ca3af;text-align:center;"
-                        "padding:32px'>Click Search</div>",
-                        gr.update(choices=[], value=None),
-                        "Enter a search term to find models on CivitAI",
-                        "",
-                    )
-
-                ci_clear_btn.click(
-                    fn=_ci_clear,
-                    outputs=[ci_results, ci_pick, ci_status, ci_action_status],
-                )
-
             # ── SHARED LOCAL HANDLERS ──
             def _loc_detail(fid):
                 if not fid:
@@ -7000,7 +6073,7 @@ class FinetuneManagerPlugin(WAN2GPPlugin):
                         "or it will be published with the finetune."
                     )
                 _stamp_hf_username(data)
-                _hf_upload(fid, data, self)
-                return f"Uploaded '{fid}'"
+                target = _hf_upload(fid, data, self)
+                return f"Uploaded '{fid}' → {target}"
 
             l_up.click(fn=_up, inputs=[l_sel_id], outputs=[l_status])

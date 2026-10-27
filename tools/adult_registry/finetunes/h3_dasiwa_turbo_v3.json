@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "DasiwaMinimaxH3_dasiwaHybridTurboV3_int8.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Token-free mirror of the Turbo v3 release \u2014 distilled, so far fewer steps.",
+    "URLs": [
+      "https://huggingface.co/lynaNSFW/DaSiWa_MMH3_HybridTurbo_V3/resolve/main/DasiwaMinimaxH3_dasiwaHybridTurboV3_int8.safetensors"
+    ],
+    "author": "lynaNSFW",
+    "version": "2026-10-02",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

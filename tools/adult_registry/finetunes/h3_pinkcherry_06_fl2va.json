@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+    "architecture": "minimax_h3_fl2va_pruned",
+    "description": "The LTX champion's MiniMax H3 line (\u2665475). Pruned int8 ConvRot \u2014 the Wan2GP-native format. \u2014 Author-published on HuggingFace under Apache-2.0; the author also ships a wan2gp.json recipe.",
+    "URLs": [
+      "https://huggingface.co/SexGod1979/PinkCherry-NSFW_MiniMax-H3/resolve/main/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors"
+    ],
+    "author": "SexGod1979",
+    "version": "beta.0.6",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

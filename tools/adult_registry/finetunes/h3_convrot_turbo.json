@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "diffusion_models/minimax_h3_fused_refdelta_r1024_turbo8_mystic07_int8_convrot.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Wan2GP ConvRot-format turbo merge \u2014 same settings, far fewer steps.",
+    "URLs": [
+      "https://huggingface.co/MATLOWAI/minimax-h3-fused-turbo-int8-convrot/resolve/main/diffusion_models/minimax_h3_fused_refdelta_r1024_turbo8_mystic07_int8_convrot.safetensors"
+    ],
+    "author": "MATLOWAI",
+    "version": "2026-08-30",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

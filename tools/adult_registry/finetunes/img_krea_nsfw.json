@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "krea2TurboNSFWAIO_v10.safetensors",
+    "architecture": "krea2_turbo",
+    "description": "The filename carries no precision token (17.8 GB, so not bf16); int8 declared here so Wan2GP does not read it as bf16.",
+    "URLs": [
+      "https://huggingface.co/lynaNSFW/Krea2turboNSFWAIO/resolve/main/krea2TurboNSFWAIO_v10.safetensors"
+    ],
+    "author": "lynaNSFW",
+    "version": "v10",
+    "tags": [
+      "adult",
+      "image"
+    ]
+  }
+}

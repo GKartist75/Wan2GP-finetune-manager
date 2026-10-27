@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "wan22EnhancedNSFWSVICamera_nsfwFASTMOVEV2Q8H.gguf",
+    "architecture": "i2v_2_2",
+    "description": "The most-downloaded Wan 2.2 NSFW checkpoint on CivitAI (54k+ downloads for the Q8 HIGH file). Strong prompt adherence and fast camera motion; Q8 HIGH+LOW pair. \u2014 Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+    "URLs": [
+      "https://civitai.com/api/download/models/2540892?fileId=2429064#/wan22EnhancedNSFWSVICamera_nsfwFASTMOVEV2Q8H.gguf"
+    ],
+    "author": "civitai.com",
+    "version": "FAST MOVE V2 Q8 HIGH+LOW",
+    "tags": [
+      "adult",
+      "wan"
+    ]
+  }
+}

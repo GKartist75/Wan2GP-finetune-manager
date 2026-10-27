@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Pruned int8 build of the most-downloaded H3 finetune - same v1.3 release, 20.9 GB instead of 34.0 GB.",
+    "URLs": [
+      "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/resolve/main/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors"
+    ],
+    "author": "WarmBloodAban",
+    "version": "v1.3",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

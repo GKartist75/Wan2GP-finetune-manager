@@ -374,39 +374,28 @@
   </div>
 </div>
 
-<!-- ============ PACK ============ -->
+<!-- ============ ADULT REGISTRY ============ -->
 <div class="section">
-  <h2><span class="emoji">🧩</span> Pack — The curated adult catalog</h2>
+  <h2><span class="emoji">🔞</span> Adult registry — the curated pack, behind a gate</h2>
 
   <div class="feature-card">
-    <h3><span>🔞</span> Turn it on first <span class="badge all">pack</span></h3>
-    <p>The Pack tab is off by default. Tick <strong>Enable the adult pack</strong> and confirm you are 18 or older; nothing downloads until you press a download button. The catalog appears only after both boxes are ticked.</p>
+    <h3><span>🔒</span> Consent gate <span class="badge all">adult</span></h3>
+    <p>The curated adult pack lives in its own registry Space and appears in the normal <strong>Browse</strong> tab with an <strong>Adult Pack</strong> badge. Entries stay hidden until you tick <strong>I am 18 or older — show Adult Pack entries</strong>, next to the Registry filter. Selecting <strong>Adult Pack</strong> without consent shows a locked card instead of models. The choice is saved in <code>config.json</code> (<code>adult_consent</code>), so it survives restarts.</p>
   </div>
 
   <div class="feature-card">
-    <h3><span>📋</span> Catalog — act on one item <span class="badge all">pack</span></h3>
-    <p>One row per item with its live state: <strong>missing</strong>, <strong>installed</strong>, <strong>stale</strong>, <strong>partial</strong> or <strong>no recipe</strong>. Filter by text or model family, choose <strong>custom</strong> to see only what you added yourself, then pick a row and use <strong>Download this</strong>, <strong>Write recipe</strong>, <strong>Load gallery</strong> or <strong>Delete this</strong>. A checkpoint's weights and its recipe are separate actions, so you can read the recipe before fetching tens of GB.</p>
-  </div>
-
-  <div class="feature-card">
-    <h3><span>🔎</span> Find &amp; Add — inspect before you add <span class="badge all">pack</span></h3>
-    <p>Search or browse <strong>HuggingFace</strong> and <strong>CivitAI</strong> from inside the plugin, then press <strong>Inspect</strong> to see the files inside a result: kind, size, whether it is a HIGH or LOW half, and the first 16 characters of its SHA-256. On CivitAI, <strong>CivitAI version</strong> switches release and re-inspects.</p>
+    <h3><span>🔎</span> Search models — CivitAI &amp; Hugging Face</h3>
+    <p>Create / Edit has a <strong>Search models</strong> accordion with a <strong>Source</strong> switch. Sort by <strong>Trending</strong>, <strong>Most downloads</strong>, <strong>Most likes</strong> or <strong>Newest updated</strong> on either API; an empty Hugging Face query lists Hub-wide trending. CivitAI keeps its <strong>Site</strong> choice (<code>civitai.com</code> / <code>civitai.red</code>), <em>Include NSFW</em> and Type/Base filters; Hugging Face uses <em>Adult-flagged only</em> (repos tagged <code>not-for-all-audiences</code>).</p>
     <ul class="step-list">
-      <li>Pick the <strong>Wan2GP architecture</strong> so the item lands where Wan2GP looks for it</li>
-      <li>Choose <strong>Add as: auto / lora / checkpoint</strong> — auto trusts the file's own classification</li>
-      <li>Press <strong>Add selected file</strong>: it joins your catalog and downloads from the Catalog tab</li>
-      <li><strong>Add by link</strong> resolves a HuggingFace repo, a CivitAI model URL, or a bare CivitAI model id</li>
+      <li>Search, then pick a result — CivitAI shows versions, Hugging Face streams the repo's <strong>weight files</strong> (name, size, SHA-256)</li>
+      <li><strong>Fill into editor</strong> — the URL lands in the right field: main URLs / <code>URLs2</code> for HIGH/LOW pairs, <code>text_encoder_URLs</code>, <code>VAE_URLs</code>, or the LoRA list</li>
+      <li><strong>Create finetune.json</strong> — Wan2GP downloads the weights when the finetune is loaded, saving each file under its real name</li>
     </ul>
   </div>
 
-  <div class="feature-card">
-    <h3><span>🔄</span> Updates — pin, then download <span class="badge all">pack</span></h3>
-    <p><strong>Check</strong> compares local files with the catalog. <strong>Check online</strong> also reads each source's live size and hash, which needs network. Nothing changes until you choose: <strong>Apply selected</strong> pins the accepted hash and size (and the CivitAI version), then <strong>Download selected</strong> fetches exactly those bytes.</p>
-  </div>
-
   <div class="tip-box">
-    <span class="icon">⚠️</span>
-    <p><strong>Pinned means pinned:</strong> downloads use the hash you accepted, and a CivitAI release stays on the version you reviewed instead of following "latest". Re-apply an update whenever you want to move forward.</p>
+    <span class="icon">💡</span>
+    <p><strong>Between CivitAI and HF fill, you rarely need to type URLs manually:</strong> search on the CivitAI tab, paste a HF repo id in the editor, or pull a registry finetune into the editor with <strong>Improve</strong>.</p>
   </div>
 </div>
 
@@ -419,13 +408,13 @@
     <li><strong>I want to share my own finetune</strong> — <strong>Create / Edit → fill form → Save &amp; Upload</strong></li>
     <li><strong>I found a model on CivitAI</strong> — <strong>CivitAI tab → search → Fill into Editor → tweak → Save &amp; Upload</strong></li>
     <li><strong>I got a .json file from someone</strong> — <strong>Local tab → Import → pick file → Load &amp; Switch</strong></li>
-    <li><strong>I want the curated adult pack</strong> — <strong>Pack → enable + confirm 18+ → Catalog → pick → Download this</strong></li>
-    <li><strong>I want a model that is not in the catalog</strong> — <strong>Pack → Find &amp; Add → Inspect → pick file → Add selected file</strong></li>
+    <li><strong>I want the curated adult pack</strong> — <strong>Browse → tick *I am 18 or older* → Adult Pack cards → Download</strong></li>
+    <li><strong>I want a model that is not in the registry</strong> — <strong>Create / Edit → Fill from CivitAI or Fill from Hugging Face → Save Locally</strong></li>
   </ol>
 </div>
 
 <div class="footer">
-  Finetune Manager v3.7.6 — Wan2GP plugin by GKartist75
+  Finetune Manager v4.0.0 — Wan2GP plugin by GKartist75
 </div>
 
 </div>

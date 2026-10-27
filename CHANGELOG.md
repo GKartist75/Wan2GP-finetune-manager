@@ -1,5 +1,39 @@
 # Changelog
 
+## v4.0.0 (2026-10-27)
+
+### Removed
+- **The adult-pack runtime is gone.** The **Pack** tab (Catalog, Find & Add, LoRAs, Checkpoints and recipes, CivitAI, Updates), `pack_state.json`, `adult-pack-custom.json` and the bundled `adult_pack_manifest.json` are deleted. The curated pack now lives in the [`wan2gp-finetunes-adult`](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes-adult) Space as plain finetune JSONs, served through the normal Browse tab — one code path instead of two parallel catalogs. Refresh it with `tools/build_adult_registry.py` + `tools/publish_adult_space.py`.
+- `fm_pack.py` slimmed from 2290 to 435 lines. What remains: `download_verified` (resumable, SHA-256-verified downloads used by asset prefetch) and the CivitAI recipe builders (`civitai_recipe`, weight-file filtering, `#/filename` URL fragments, plain-text blurbs). Catalog/state/updates/inventory/deletion helpers are gone.
+
+### Added
+- **Search models — CivitAI *and* Hugging Face, with sorts** — the Create/Edit search accordion covers both engines behind a *Source* switch. Sort by **Trending**, **Most downloads**, **Most likes** or **Newest updated** on either API (CivitAI `sort=` param, HF Hub `sort=`), an empty HF query lists Hub-wide trending, and *Adult-flagged only* (HF) maps to the `not-for-all-audiences` tag while CivitAI keeps *Include NSFW* + site choice. Picking an HF result streams the repo's weight files (name, size, LFS SHA-256) into a multiselect; *Fill into editor* routes by keyword into URLs / URLs2 (HIGH/LOW pairs), `text_encoder_URLs` and `VAE_URLs`, or appends LoRAs; *Create finetune.json* writes the same token-free recipe structure for HF repos as for CivitAI releases (Add-as *Auto* uses the 2 GB / HIGH-LOW pair heuristic, overridable to Checkpoint or LoRA).
+- **18+ consent gate in Browse** — an *I am 18 or older — show Adult Pack entries* checkbox now sits beside the registry filter. Adult entries are hidden until it is ticked; selecting the **Adult Pack** registry without consent shows a "locked" card instead. The choice persists in `config.json` (`adult_consent`) and survives reloads and refreshes.
+
+### Tests
+- Suite pruned in step with the removals: pack catalog/updates/deletion tests deleted, download + recipe-builder tests kept, `_pack_md_cell` (removed with the pack table) dropped. `python -m unittest discover -s tests` — 58 tests, all green.
+
+## v3.8.0 (2026-10-27)
+
+### Added
+- **Second registry Space (adult pack split)** - the plugin now merges entries from `GKartist75/wan2gp-finetunes` and a new `GKartist75/wan2gp-finetunes-adult` Space. Community and adult pack finetunes live in separate Spaces; the dynamic scan lists both, and each entry records its `registry_source`. The Spaces are configurable via `registry_spaces` (repo id list) in `config.json`.
+- **Automatic routing on upload** - finetunes tagged `adult` are uploaded to the adult Space, everything else to the community Space. Status messages show the target Space (`Saved & uploaded <id> → <space>`).
+- **Auth for gated/private Spaces** - raw registry fetches now send `Authorization: Bearer <registry_token>` when a token is configured, so a gated or private Space can be read the same way it is written (the scan already passed the token to the Hub API).
+- **Adult Pack badge on registry cards** - entries served from the adult Space show the `Adult Pack` badge that pack entries already used.
+- **Registry filter in Browse** - a *Registry* dropdown (All registries / Community / Adult Pack) isolates either Space, and with "All" the community entries render first with adult entries grouped after them.
+
+### Changed
+- **Per-source fetch fallback** - `_fetch_registry_json()` tries the entry's source first; unknown ids fall back to trying every registered Space. The three registry load handlers pass the entry's source explicitly instead of guessing.
+- **Family index publishing** - `families.json` is refreshed on the Space that received the upload.
+- **Header links** - the plugin header now links both registry Spaces.
+
+### Tools
+- `tools/build_adult_registry.py` converts `adult_pack_manifest.json` into registry staging under `tools/adult_registry/` (23 finetune defs, pinned token-free URLs, verbatim pack manifest copy) plus a Space README.
+- `tools/publish_adult_space.py` dry-runs/uploads the staging to `GKartist75/wan2gp-finetunes-adult` (`--push --token`, creates the static Space if missing). Publishing requires your HF token; nothing is committed from the plugin.
+
+### Tests
+- `py_compile` clean; runtime smoke verified live against HF: source routing, per-source fetch, fallback, 16/16 Space entries scanned with sources, badge fields.
+
 ## v3.7.6 (2026-10-23)
 
 ### Added

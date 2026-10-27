@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "DasiwaWAN22I2V14BTastysinV8_q8High.gguf",
+    "architecture": "i2v_2_2",
+    "description": "DaSiWa's flagship Wan 2.2 I2V adult checkpoint with the Q8 HIGH+LOW pair. Current top-tier Wan 2.2 realism, anatomy and motion; 1.4k likes and ~20k downloads for the Q8 HIGH file on CivitAI. \u2014 Author-exclusive CivitAI release; fetched with your own CivitAI token. No re-hosting.",
+    "URLs": [
+      "https://civitai.com/api/download/models/2466604?fileId=2355406#/DasiwaWAN22I2V14BTastysinV8_q8High.gguf"
+    ],
+    "author": "civitai.com",
+    "version": "Q8 HIGH+LOW",
+    "tags": [
+      "adult",
+      "wan"
+    ]
+  }
+}

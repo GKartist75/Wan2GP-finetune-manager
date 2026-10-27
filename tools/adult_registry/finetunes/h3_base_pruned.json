@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "MiniMax-H3-Ref2VA-pruned_int8_convrot.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Plain MiniMax H3 weights from the official release \u2014 no finetune, for people who want the base model.",
+    "URLs": [
+      "https://huggingface.co/DeepBeepMeep/MiniMax-H3/resolve/main/MiniMax-H3-Ref2VA-pruned_int8_convrot.safetensors"
+    ],
+    "author": "DeepBeepMeep",
+    "version": "2026-10-15",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

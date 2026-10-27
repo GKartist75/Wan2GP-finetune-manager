@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "INT8 diffusion_models/10Eros_v1.4_DMD_int8_convrot.safetensors",
+    "architecture": "ltx2_22B",
+    "description": "Community pick for LTX 2.3 image-to-video.",
+    "URLs": [
+      "https://huggingface.co/TenStrip/LTX2.3-10Eros/resolve/main/INT8%20diffusion_models/10Eros_v1.4_DMD_int8_convrot.safetensors"
+    ],
+    "author": "TenStrip",
+    "version": "v1.4",
+    "tags": [
+      "adult",
+      "ltx"
+    ]
+  }
+}

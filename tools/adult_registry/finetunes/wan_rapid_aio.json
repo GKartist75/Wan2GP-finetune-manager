@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "wan2.2-i2v-rapid-aio-v10-nsfw-Q4_K_M.gguf",
+    "architecture": "i2v_2_2",
+    "description": "Merged high+low NSFW Rapid \u2014 the everyday Wan 2.2 adult checkpoint.",
+    "URLs": [
+      "https://huggingface.co/desirel/WAN2.2-14B-Rapid-AllInOne-GGUF-NSFW-v10/resolve/main/wan2.2-i2v-rapid-aio-v10-nsfw-Q4_K_M.gguf"
+    ],
+    "author": "desirel",
+    "version": "v10",
+    "tags": [
+      "adult",
+      "wan"
+    ]
+  }
+}

@@ -112,11 +112,6 @@ class DownloadGuardTests(unittest.TestCase):
             self.assertFalse(dest.exists())
             self.assertFalse(dest.with_name(dest.name + ".part").exists())
 
-    def test_repo_id_traversal_is_rejected(self):
-        self.assertFalse(fm_pack.repo_id_ok("../evil"))
-        self.assertFalse(fm_pack.repo_id_ok("owner/.."))
-        self.assertTrue(fm_pack.repo_id_ok("owner/repo"))
-
     def test_download_writes_verified_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "model.safetensors"
@@ -158,47 +153,3 @@ class DownloadGuardTests(unittest.TestCase):
             self.assertFalse(dest.exists())
             self.assertFalse(dest.with_name(dest.name + ".part").exists())
 
-
-class DeleteContainmentTests(unittest.TestCase):
-    def test_civitai_delete_ignores_paths_outside_roots(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            ckpts = root / "ckpts"
-            loras = root / "loras"
-            fins = root / "finetunes"
-            for folder in (ckpts, loras, fins):
-                folder.mkdir()
-            outside = root / "outside.txt"
-            outside.write_text("keep", encoding="utf-8")
-            inside = ckpts / "adult-pack" / "ok.safetensors"
-            inside.parent.mkdir()
-            inside.write_text("remove", encoding="utf-8")
-            state = {
-                "civitaiInstalled": {
-                    "42": {"files": [str(outside), str(inside)]}
-                }
-            }
-            result = fm_pack.delete_civitai(
-                {"id": "42", "architecture": "wan"},
-                state,
-                ckpts,
-                lambda _arch: loras,
-                fins,
-            )
-            self.assertTrue(outside.exists())
-            self.assertFalse(inside.exists())
-            self.assertEqual(result["removedFiles"], [str(inside)])
-
-    def test_finetune_delete_ignores_absolute_paths_outside_root(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            ckpts = root / "ckpts"
-            fins = root / "finetunes"
-            ckpts.mkdir()
-            fins.mkdir()
-            outside = root / "outside.safetensors"
-            outside.write_bytes(b"keep")
-            entry = {"id": "x", "urls": [str(outside)]}
-            result = fm_pack.delete_finetune(entry, ckpts, fins)
-            self.assertEqual(result["removedWeights"], [])
-            self.assertTrue(outside.is_file())

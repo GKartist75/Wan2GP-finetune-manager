@@ -1,4 +1,4 @@
-# Wan2GP Finetune Manager Plugin v3.7.6 🧪
+# Wan2GP Finetune Manager Plugin v4.0.0 🧪
 
 > ⚠️ **This is a test version!** The plugin is still in active development. If you find bugs, have suggestions, or run into any issues, please let me know:
 > - **GitHub Issues**: [Open an issue](https://github.com/GKartist75/Wan2GP-finetune-manager/issues)
@@ -6,7 +6,7 @@
 
 Community finetune registry plugin for Wan2GP. Browse, load, create, improve, and upload finetune JSONs with an integrated Create/Edit tab that matches the built-in Finetune Editor (Alt+F).
 
-> **Latest version: v3.7.6** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) | [User Guide](./user-guide.html)
+> **Latest version: v4.0.0** — [GitHub](https://github.com/GKartist75/Wan2GP-finetune-manager) | [HF Registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes) · [Adult registry](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes-adult) | [User Guide](./user-guide.html)
 
 ## Security and trust — verify every URL yourself
 
@@ -47,13 +47,13 @@ Always check yourself.**
 
 | Tab | Functionality |
 |---|---|
-| **Browse** | Refresh registry, search by name/description/author/ID, filter by **model family**, architecture or tag, cards grouped under family headings, click cards for JSON details, validate URLs, download locally, improve/create variant |
-| **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. Architecture choices come from the running Wan2GP host and are labelled by family. All URL/LoRA fields include a **Browse 📂** button for native file selection. |
+| **Browse** | Refresh registry, search by name/description/author/ID, filter by **model family**, architecture or tag, cards grouped under family headings, click cards for JSON details, validate URLs, download locally, improve/create variant. Adult-pack entries come from the separate adult Space and stay hidden behind an **18+ consent checkbox** |
+| **Create / Edit** | Full tabbed form (URLs, LoRAs, Resolutions, Help, Prompt Enhancer, Settings) with Auto-ID, Markdown toolbar, Creator/Editor mode, Import/Export, URL validation, pre-download, two-step delete. Architecture choices come from the running Wan2GP host and are labelled by family. All URL/LoRA fields include a **Browse 📂** button for native file selection. The **Search models** accordion covers both **CivitAI** (site choice, NSFW include, Type/Base filters) and **Hugging Face**, sortable by trending / most downloads / most likes / newest, then fills the editor or writes a finetune.json |
 | **Local** | Visual card browser grouped by family, search and family/architecture filters, load & switch, delete, export, import .json with preview, upload to registry |
-| **CivitAI** | Search CivitAI by query/type/base model, on `civitai.com` or its adult front-end `civitai.red`, browse results with version details, pick a version from the result dropdown, then **Fill Selected** into Create/Edit, **Download selected** into the folder Wan2GP scans, or **Create finetune.json** so Wan2GP downloads and files the weights itself |
-| **Pack** | Optional curated adult pack catalog: 18+ gate plus six sub-tabs. **Catalog** (one row per item with its live state; download/recipe/gallery/delete for just that item), **Find & Add** (search or browse HuggingFace and CivitAI, inspect files, add one as a LoRA or checkpoint, or add by link), **LoRAs**, **Checkpoints and recipes**, **CivitAI** (release selection and downloads), **Updates** (offline compare, live online check, apply pins, download the pinned bytes). Off by default. |
 
-## Pack recipes and assets
+The curated adult pack is served by the [`wan2gp-finetunes-adult`](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes-adult) Space and refreshed with `tools/build_adult_registry.py` / `tools/publish_adult_space.py`; the plugin no longer bundles a catalog.
+
+## Recipes and assets
 
 The plugin understands Wan2GP's pack recipe conventions, so a recipe written by
 the desktop launcher (or shared by another user) opens with the same asset paths
@@ -73,21 +73,6 @@ Wan2GP itself will use:
 - **Assets** and **Download missing** use the resolved destination, so downloads
   land where Wan2GP scans them. The summary is re-read from disk after transfers.
 - The Local tab marks curated pack recipes with an **Adult Pack** badge.
-- The **Pack** tab is the native Gradio home for the curated catalog and is off
-  by default. Its state lives in `pack_state.json`; items you add yourself live in
-  `adult-pack-custom.json` and behave exactly like curated ones.
-- **Catalog** reads the same status the actions use, so the table, the detail
-  panel and what **Download this** / **Delete this** will touch can never drift.
-- **Find & Add** inspects a HuggingFace or CivitAI result before you commit to a
-  download: file kind, size, HIGH/LOW half and SHA-256, plus the version list for
-  CivitAI. Adding is one file at a time, as a LoRA or a checkpoint.
-- **Updates** keeps acceptance and download separate: **Check online** records the
-  live hash/size, **Apply selected** pins them, and only then does **Download
-  selected** fetch those exact bytes. CivitAI releases are pinned to the version
-  you reviewed instead of "latest".
-
-The desktop launcher installs this plugin by default and leaves pack management
-here; it keeps only a small companion card in **Manage -> Plugins**.
 
 ## Install
 
@@ -183,17 +168,20 @@ wan2gp-finetune-manager/
 ├── config.example.json  # Registry token template (copy to config.json)
 ├── config.json          # Registry token (gitignored — create from config.example.json)
 ├── plugin.py            # Plugin entry point and UI logic
-├── plugin_info.json     # Plugin metadata v3.7.6
+├── plugin_info.json     # Plugin metadata v4.0.0
 ├── fm_security.py       # URL policy, safe fetching, size limits
 ├── fm_assets.py         # Pack recipe/asset resolution
-├── fm_pack.py           # Pack catalog, downloads, updates
+├── fm_pack.py           # Verified downloads + CivitAI recipe builders
 ├── CHANGELOG.md         # Version history
 ├── user-guide.html      # Friendly walkthrough of all features
 ├── hf_space/            # Static HF registry page (uploaded to the Space)
 │   ├── index.html       # Family-aware registry browser
 │   ├── index.json       # Machine-readable registry index
 │   └── families.json    # Generated family catalogue + architecture map
-├── tests/               # Asset, pack and security tests
+├── tools/               # Adult registry maintenance
+│   ├── build_adult_registry.py    # Convert the pack manifest into registry staging
+│   └── publish_adult_space.py     # Dry-run / upload the adult registry Space
+├── tests/               # Asset, download and security tests
 └── .gitignore
 ```
 
@@ -220,6 +208,18 @@ Remove-Item -Recurse -Force .\__pycache__
 ```
 
 A `__pycache__/plugin.cpython-*.pyc` cannot substitute for `plugin.py` — the loader needs the source file beside it.
+
+## What's New in v4.0.0
+
+- **One registry, no parallel catalog** — the Pack tab and its bundled `adult_pack_manifest.json` are gone. Curated adult finetunes are plain JSONs in the [`wan2gp-finetunes-adult`](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes-adult) Space, served through the normal Browse tab. `fm_pack.py` slimmed from 2290 to 435 lines (verified downloads + CivitAI recipe builders only).
+- **18+ consent gate** — adult entries stay hidden until you tick *I am 18 or older — show Adult Pack entries* in Browse; the choice persists in `config.json` (`adult_consent`).
+- **Dual-engine search with sorts** — the Create/Edit **Search models** accordion now covers CivitAI *and* Hugging Face, sortable by trending / most downloads / most likes / newest. HF results list the repo's weight files (size + SHA-256) and fill or export to a finetune.json like CivitAI releases do.
+
+## What's New in v3.8.0
+
+- **Second registry Space** — finetunes tagged `adult` upload to the new `GKartist75/wan2gp-finetunes-adult` Space; everything else goes to the community registry. The Browse tab merges both Spaces and badges adult entries with the **Adult Pack** badge. Spaces are configurable via `registry_spaces` in `config.json`.
+- **Gated/private registry support** — raw registry fetches now send your `registry_token` as `Authorization: Bearer`, so a gated or private Space reads the same way it writes.
+- **Adult registry publisher** — `tools/build_adult_registry.py` converts `adult_pack_manifest.json` into registry staging; `tools/publish_adult_space.py` uploads it (`--push`, optional `--pr`). The adult Space is live: [wan2gp-finetunes-adult](https://huggingface.co/spaces/GKartist75/wan2gp-finetunes-adult).
 
 ## What's New in v3.7.6
 

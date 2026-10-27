@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "DasiwaMinimaxH3_V4_int8.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Current #1 MiniMax H3 finetune. Image-reference workflows need GGUF CUDA 1.0.26 (upstream v18.17). \u2014 DaSiWa release mirrored by community accounts \u2014 fetch only, never re-hosted.",
+    "URLs": [
+      "https://huggingface.co/jeuzu/Dasiwa_MiniMax_H3_V4_int8/resolve/main/DasiwaMinimaxH3_V4_int8.safetensors"
+    ],
+    "author": "jeuzu",
+    "version": "V4",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

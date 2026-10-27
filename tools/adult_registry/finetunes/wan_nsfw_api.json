@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "nsfw_wan_14b_e15_q4_k.gguf",
+    "architecture": "i2v_2_2",
+    "description": "NSFW-API Wan 14B finetune.",
+    "URLs": [
+      "https://huggingface.co/NSFW-API/NSFW_Wan_14b/resolve/main/nsfw_wan_14b_e15_q4_k.gguf"
+    ],
+    "author": "NSFW-API",
+    "version": "2025-07-01",
+    "tags": [
+      "adult",
+      "wan"
+    ]
+  }
+}

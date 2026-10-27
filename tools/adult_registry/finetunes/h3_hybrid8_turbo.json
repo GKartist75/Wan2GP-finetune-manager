@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "DasiwaMinimaxH3_dasiwaHybrid8turboV1.safetensors",
+    "architecture": "minimax_h3_ref2va_pruned",
+    "description": "Earlier turbo hybrid, kept as an alternative.",
+    "URLs": [
+      "https://huggingface.co/lynaNSFW/DaSiWa_MiniMax_H3/resolve/main/DasiwaMinimaxH3_dasiwaHybrid8turboV1.safetensors"
+    ],
+    "author": "lynaNSFW",
+    "version": "2026-08-31",
+    "tags": [
+      "adult",
+      "h3"
+    ]
+  }
+}

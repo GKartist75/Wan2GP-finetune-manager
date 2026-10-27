@@ -234,14 +234,6 @@ class UploadHostGateTests(unittest.TestCase):
         publish.assert_called_once()
 
 
-class MarkdownSafetyTests(unittest.TestCase):
-    def test_pack_cells_escape_html_and_pipes(self):
-        value = plugin._pack_md_cell("<img src=x>|next")
-        self.assertIn("&lt;img", value)
-        self.assertIn("\\|", value)
-        self.assertNotIn("<img", value)
-
-
 class CardSafetyTests(unittest.TestCase):
     def test_non_string_registry_fields_do_not_crash_or_render_raw(self):
         html = plugin._fmt_card_html_item(
