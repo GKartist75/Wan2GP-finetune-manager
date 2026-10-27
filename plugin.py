@@ -225,7 +225,7 @@ def _write_settings_for_wan2gp(fid: str, data: dict) -> "Path":
 
 PlugIn_Name = "Finetune Manager"
 PlugIn_Id = "FinetuneManager"
-PLUGIN_VERSION = "4.0.0"
+PLUGIN_VERSION = "4.0.1"
 
 DEFAULT_REGISTRY = "https://huggingface.co/spaces/GKartist75/wan2gp-finetunes/raw/main"
 REGISTRY_SPACE = "GKartist75/wan2gp-finetunes"
@@ -894,7 +894,7 @@ def _fmt_card_html_item(
         f"document.querySelector('gradio-app'))||document;"
         f"r=r.shadowRoot||r;"
         f"var ta=r.querySelector('#{sel_elem_id} textarea');"
-        f"if(ta){{ta.value={html.escape(json.dumps(fid), quote=True)};"
+        f"if(ta){{ta.value={json.dumps(fid)};"
         f"ta.dispatchEvent(new Event('input',{{bubbles:true}}))}}"
     )
 

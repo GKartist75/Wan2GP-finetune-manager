@@ -1,5 +1,10 @@
 # Changelog
 
+## v4.0.1 (2026-10-27)
+
+### Fixed
+- **Card selection was dead on every card.** The shared card builder (`_fmt_card_html_item`, used by both Browse and Local) double-escaped the click handler: the card id went through `html.escape` inside and outside again, so the generated `onclick` contained literal `&quot;` and threw `SyntaxError: Unexpected token '&'` — clicking a card did nothing and the Detail panel stayed `{}`. Present since the shared builder existed (v3.7.x). The id is now escaped once by the outer attribute escape; verified live in a browser on both tabs (click → Detail JSON fills).
+
 ## v4.0.0 (2026-10-27)
 
 ### Removed
